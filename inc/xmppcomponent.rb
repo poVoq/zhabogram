@@ -1,12 +1,15 @@
 require 'xmpp4r'
 
+#############################
 ### Some constants #########
 ::HELP_MESSAGE = "Unknown command. \n\n Please, use /login <phonenumber> to try log in. ☺"
+#############################
 
 #############################
 ## XMPP Transport Class #####
 #############################
 class XMPPComponent
+    # init class and set logger #
     def initialize()
         @logger = Logger.new(STDOUT); @logger.progname = '[XMPPComponent]'
     end
@@ -27,40 +30,40 @@ class XMPPComponent
             exit 1
         end
     end
-        
+    
+    #############################
+    #### Callback handlers #####
+    #############################
+
     # new message to XMPP component #
     def message_handler(msg)
         @logger.info 'New message from [%s] to [%s]' % [msg.from, msg.to]
-
         return self.process_internal_command(msg.from.bare, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
         return @sessions[msg.from.bare].queue_message(msg.to.to_s, msg.first_element_text('body')) if @sessions.key? msg.from.bare and @sessions[msg.from.bare].online? # queue message for processing session is active for jid from
     end
     
+    #############################
+    #### Command handlers #####
+    #############################
+
     # process internal /command #
     def process_internal_command(jfrom, body)
         case body.split[0] # /command argument = [command, argument]
-        when '/login' 
-            # we will try to create new user session for JID <jfrom> and try to start telegram client for login <body.split[1]>
-            @sessions[jfrom] = XMPPSession.new(jfrom, body.split[1])
-        when '/code', '/password'  
-            # we will pass auth data to user session if this session exists. 
-            @sessions[jfrom].enter_auth_data(body.split[0][1..8], body.split[1])  if @sessions.key? jfrom
-        when '/logout'
-            # go offline
-            @sessions[jfrom].offline! if @sessions.key? jfrom
-        else # unknown command -- we will display sort of help message.
-            reply = Jabber::Message.new; reply.from, reply.to, reply.body, reply.type = @@transport.jid, jfrom, ::HELP_MESSAGE, :chat 
-            @@transport.send(reply) 
+            when '/login'  then @sessions[jfrom] = XMPPSession.new(jfrom, body.split[1]) # create new session for jid <jfrom> and spawn tg instance
+            when '/code', '/password'  then @sessions[jfrom].enter_auth_data(body.split[0][1..8], body.split[1])  if @sessions.key? jfrom # pass auth data to telegram instance 
+            when '/logout' then @sessions[jfrom].offline! if @sessions.key? jfrom # go offline 
+            else  reply = Jabber::Message.new; reply.from, reply.to, reply.body, reply.type = @@transport.jid, jfrom, ::HELP_MESSAGE, :chat; @@transport.send(reply) # unknown command -- we will display sort of help message.
         end
     end
+
 end 
 
 #############################   
 ## XMPP Session Class #######
 #############################
-
 class XMPPSession < XMPPComponent
-    attr_accessor :user_jid, :tg_login, :tg_auth_data, :message_queue, :online
+    attr_reader :user_jid, :tg_login, :tg_auth_data, :message_queue
+    attr_accessor :online
     
     # start XMPP user session and Telegram client instance #
     def initialize(jid, tg_login)
@@ -70,7 +73,9 @@ class XMPPSession < XMPPComponent
         @tg_client_thread = Thread.new{ TelegramClient.new(self, tg_login) }
     end
     
-    # send message to XMPP  #
+    ###########################################
+
+    # send message to current user via XMPP  #
     def send_message(from = nil, body = '')
         @logger.info "Incoming message from Telegram network <- %s" % from.to_s
         from = from.nil? ? @@transport.jid : from.to_s+'@'+@@transport.jid.to_s
@@ -90,14 +95,10 @@ class XMPPSession < XMPPComponent
         @tg_auth_data[typ.to_sym] = data
     end 
     
+    ###########################################
+
     # session status #
-    def online?
-        @online
-    end
-    def online!
-        @online = true
-    end
-    def offline!
-        @online = false
-    end
+    def online?() @online end
+    def online!() @online = true end
+    def offline!() @online = false end
 end

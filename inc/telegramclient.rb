@@ -16,17 +16,18 @@ class TelegramClient
     # instance initialization #
     def initialize(xmpp, login)
     
-        @xmpp = xmpp
-        @login = login
-        @logger = Logger.new(STDOUT); @logger.progname = '[TelegramClient: %s/%s]' % [@xmpp.user_jid, @login]
+        @logger = Logger.new(STDOUT); @logger.progname = '[TelegramClient: %s/%s]' % [xmpp.user_jid, login] # create logger
+        @xmpp = xmpp # our XMPP user session. we will send messages back to Jabber through this instance. 
+        @login = login # store tg login 
 
+        # spawn telegram client and specify callback handlers 
         @logger.info 'Spawning Telegram client instance..'        
         @client = TD::Client.new(database_directory: 'sessions/' + @login, files_directory: 'sessions/' + @login + '/files/') # create telegram client instance
         @client.on(TD::Types::Update::AuthorizationState) do |update| self.auth_handler(update) end # register auth update handler 
         @client.on(TD::Types::Update::NewMessage) do |update| self.message_handler(update) end # register new message update handler 
         @client.connect # 
         
-        # we will check new messages in queue and auth data in forever loop #
+        # we will check for outgoing messages in a queue and/or auth data from XMPP thread while XMPP indicates that service is online #
         begin
             while not @xmpp.online? === false do 
                 self.process_outgoing_msg(@xmpp.message_queue.pop) unless @xmpp.message_queue.empty? # found something in message queue 
@@ -72,8 +73,8 @@ class TelegramClient
     # message from telegram network handler # 
     def message_handler(update)
         @logger.info 'Got NewMessage update'
-        from = update.message.chat_id 
-        text = update.message.content.text.text
+        from = update.message.chat_id.to_s
+        text = update.message.content.text.text.to_s
         @xmpp.send_message(from, text) if not update.message.is_outgoing
     end
     
