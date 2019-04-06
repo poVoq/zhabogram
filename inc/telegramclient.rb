@@ -28,7 +28,7 @@ class TelegramClient
         
         # we will check new messages in queue and auth data in forever loop #
         begin
-            loop do 
+            while not @xmpp.online? === false do 
                 self.process_outgoing_msg(@xmpp.message_queue.pop) unless @xmpp.message_queue.empty? # found something in message queue 
                 self.process_auth(:code, @xmpp.tg_auth_data[:code]) unless @xmpp.tg_auth_data[:code].nil? # found code in auth queue
                 self.process_auth(:password, @xmpp.tg_auth_data[:password]) unless @xmpp.tg_auth_data[:password].nil? # found 2fa password in auth queue
@@ -65,6 +65,7 @@ class TelegramClient
         when TD::Types::AuthorizationState::Ready 
             @logger.info 'Authorization successful!'
             @xmpp.send_message(nil, 'Authorization successful.')
+            @xmpp.online!
         end        
     end
     

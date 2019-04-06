@@ -33,7 +33,7 @@ class XMPPComponent
         @logger.info 'New message from [%s] to [%s]' % [msg.from, msg.to]
 
         return self.process_internal_command(msg.from.bare, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
-        return @sessions[msg.from.bare].queue_message(msg.to.to_s, msg.first_element_text('body')) if @sessions.key? msg.from.bare # queue message for processing session is active for jid from
+        return @sessions[msg.from.bare].queue_message(msg.to.to_s, msg.first_element_text('body')) if @sessions.key? msg.from.bare and @sessions[msg.from.bare].online? # queue message for processing session is active for jid from
     end
     
     # process internal /command #
@@ -45,6 +45,9 @@ class XMPPComponent
         when '/code', '/password'  
             # we will pass auth data to user session if this session exists. 
             @sessions[jfrom].enter_auth_data(body.split[0][1..8], body.split[1])  if @sessions.key? jfrom
+        when '/logout'
+            # go offline
+            @sessions[jfrom].offline! if @sessions.key? jfrom
         else # unknown command -- we will display sort of help message.
             reply = Jabber::Message.new; reply.from, reply.to, reply.body, reply.type = @@transport.jid, jfrom, ::HELP_MESSAGE, :chat 
             @@transport.send(reply) 
@@ -57,14 +60,14 @@ end
 #############################
 
 class XMPPSession < XMPPComponent
-    attr_accessor :user_jid, :tg_login, :tg_auth_data, :message_queue
+    attr_accessor :user_jid, :tg_login, :tg_auth_data, :message_queue, :online
     
     # start XMPP user session and Telegram client instance #
     def initialize(jid, tg_login)
         @logger = Logger.new(STDOUT); @logger.progname = '[XMPPSession: %s/%s]' % [jid, tg_login]
         @logger.info "Starting Telegram session"
         @user_jid, @tg_login, @tg_auth_data, @message_queue = jid, tg_login, {code: nil, password: nil}, Queue.new()
-        @tg_client = Thread.new{ TelegramClient.new(self, tg_login) }
+        @tg_client_thread = Thread.new{ TelegramClient.new(self, tg_login) }
     end
     
     # send message to XMPP  #
@@ -79,7 +82,6 @@ class XMPPSession < XMPPComponent
     def queue_message(to, text = '')
         @logger.info "Queuing message to be sent to Telegram network user -> " % to
         @message_queue << {to: to.split('@')[0], text: text}
-        puts @message_queue
     end
 
     # enter auth data (we will share this data within :tg_auth_data to Telegram client thread ) #
@@ -87,5 +89,15 @@ class XMPPSession < XMPPComponent
         logger.info "Authorizing in Telegram network with :%s" % typ
         @tg_auth_data[typ.to_sym] = data
     end 
-
+    
+    # session status #
+    def online?
+        @online
+    end
+    def online!
+        @online = true
+    end
+    def offline!
+        @online = false
+    end
 end
