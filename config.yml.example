@@ -1,0 +1,13 @@
+telegram:
+
+    api_id: '17349'
+    api_hash: '344583e45741c457fe1862106095a5eb'
+    verbosity: 3
+    
+xmpp:
+
+    jid: 'zhabogram.localhost'
+    host: '127.0.0.1'
+    port: 8899
+    secret: 'password'
+    
