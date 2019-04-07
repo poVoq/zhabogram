@@ -177,7 +177,7 @@ class TelegramClient
     
     # processing authorization #
     def process_auth(typ, data)
-        @logger.info 'Check authorization :%s [%s]..' % [typ.to_s, data]
+        @logger.info 'Check authorization :%s..' % typ.to_s
         @client.check_authentication_code(data) if typ == :code 
         @client.check_authentication_password(data) if typ == :password
     end
