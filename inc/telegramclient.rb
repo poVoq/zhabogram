@@ -28,7 +28,7 @@ class TelegramClient
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[TelegramClient: %s/%s]' % [xmpp.user_jid, login] # create logger
         @xmpp = xmpp # our XMPP user session. we will send messages back to Jabber through this instance. 
         @login = login # store tg login 
-        @cache = {chats: {}, users: {} } # we will store our cache here
+        @cache = {chats: {}, users: {}, unread_msg: {} } # we will store our cache here
         @files_dir = File.dirname(__FILE__) + '/../sessions/' + @xmpp.user_jid + '/files/'
 
         # spawn telegram client and specify callback handlers 
@@ -120,6 +120,8 @@ class TelegramClient
         text = "[Reply to MSG %s] %s" % [update.message.reply_to_message_id.to_s, text]  if update.message.reply_to_message_id.to_i != 0 # reply
         text = "[MSG %s] [%s] %s" % [update.message.id.to_s, self.format_username(update.message.sender_user_id), text] # username/id
         
+        # send and add message id to unreads
+        @cache[:unread_msg][update.message.chat_id] = update.message.id
         @xmpp.send_message(update.message.chat_id.to_s, text)
     end
     
@@ -184,8 +186,25 @@ class TelegramClient
     # processing outgoing message from queue #
     def process_outgoing_msg(msg)
         @logger.info 'Sending message to user/chat <%s> within Telegram network..' % msg[:to]
-        message = TD::Types::InputMessageContent::Text.new(:text => { :text => msg[:text], :entities => []}, :disable_web_page_preview => false, :clear_draft => false )
-        @client.send_message(msg[:to].to_i, message)
+        chat_id, text, reply_to = msg[:to].to_i, msg[:text], 0
+        
+        # handling replies #
+        if msg[:text][0] == '>' then 
+            splitted = msg[:text].split("\n")
+            reply_to, reply_text = splitted[0].scan(/\d/)[0] || 0
+            text = splitted.drop(1).join("\n") if reply_to != 0 
+        end
+        
+        # handle commands... (todo) #
+        #
+        
+        # mark all messages within this chat as read #
+        @client.view_messages(chat_id, [@cache[:unread_msg][chat_id]], force_read: true) if @cache[:unread_msg][chat_id]
+        @cache[:unread_msg][chat_id] = nil
+        
+        # send message #
+        message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => true, :clear_draft => false )
+        @client.send_message(chat_id, message, reply_to_message_id: reply_to)
     end
 
     # update users information and save it to cache #
@@ -246,6 +265,7 @@ class TelegramClient
     # format tg user name #
     def format_username(user_id)
         if not @cache[:users].key? user_id then self.process_user_info(user_id) end
+        id = (@cache[:users][user_id].username == '') ? user_id : @cache[:users][user_id].username
         name = '%s %s (@%s)' % [@cache[:users][user_id].first_name, @cache[:users][user_id].last_name, @cache[:users][user_id].username]
         name.sub! ' ]', ']'
         return name 

@@ -146,7 +146,6 @@ class XMPPSession < XMPPComponent
         return if self.online?
         @logger.info "Starting Telegram session"
         @online = nil
-        self.subscription_req(nil) 
         @telegram_thr = Thread.new{ TelegramClient.new(self, @tg_login) } # init tg instance in new thread
     end
     
@@ -207,6 +206,6 @@ class XMPPSession < XMPPComponent
 
     # session status #
     def online?() @online end
-    def online!() @online = true; @tg_auth = {}; self.presence_update(nil, nil, "Logged in as " + @tg_login.to_s) end
+    def online!() @online = true; @tg_auth = {};  self.subscription_req(nil); self.presence_update(nil, nil, "Logged in as " + @tg_login.to_s) end
     def offline!() @online = false; self.presence_update(nil, nil, "Logged out", :unavailable); end
 end
