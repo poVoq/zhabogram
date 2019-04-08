@@ -111,12 +111,11 @@ class TelegramClient
             when TD::Types::MessageContent::Audio then content = [update.message.content.audio.audio, update.message.content.audio.file_name.to_s, update.message.content.audio.mime_type.to_s] 
             when TD::Types::MessageContent::Document then content = [update.message.content.document.document, update.message.content.document.file_name.to_s, update.message.content.document.mime_type.to_s]
         end 
-        puts content
         @client.download_file(content[0].id) if content  # download it if already not
                 
         # formatting...
-        text = (content.nil?) ? update.message.content.text.text.to_s : ''
-        text = "[%s (%s), %d bytes] | %s | %s" % [content[1], content[2], content[0].size.to_i, self.format_content_link(content[0].id, content[1]), text] if content   # content format 
+        text = (content.nil?) ? update.message.content.text.text.to_s : update.message.content.caption.text.to_s
+        text = "[%s (%s), %d bytes] | %s | %s" % [content[1], content[2], content[0].size.to_i, self.format_content_link(content[0].remote.id, content[1]), text] if content   # content format 
         text = "[FWD From %s] %s" % [self.format_username(update.message.forward_info.sender_user_id), text] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd 
         text = "[Reply to MSG %s] %s" % [update.message.reply_to_message_id.to_s, text]  if update.message.reply_to_message_id.to_i != 0 # reply
         text = "[MSG %s] [%s] %s" % [update.message.id.to_s, self.format_username(update.message.sender_user_id), text] # username/id
@@ -156,7 +155,7 @@ class TelegramClient
         @logger.debug update.to_json
         if update.file.local.is_downloading_completed then
             fname = update.file.local.path.to_s
-            target = "%s/%s%s" % [@@content_path, Digest::SHA256.hexdigest("Current user = %s, File ID = %s" % [@tg_login.to_s, update.file.id.to_s]), File.extname(fname)]
+            target = "%s/%s%s" % [@@content_path, Digest::SHA256.hexdigest("Current user = %s, File ID = %s" % [@tg_login.to_s, update.file.remote.id]), File.extname(fname)]
             @logger.debug 'Downloading of <%s> completed! Link to <%s>' % [fname, target] 
             File.symlink(fname, target)
         end

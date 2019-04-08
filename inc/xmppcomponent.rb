@@ -102,7 +102,6 @@ class XMPPComponent
     def process_internal_command(jfrom, body)
         case body.split[0] # /command argument = [command, argument]
         when '/login'  # creating new session if not exists and connect if user already has session
-            puts @sessions
             @sessions[jfrom] = XMPPSession.new(jfrom, body.split[1]) if not @sessions.key? jfrom
             @sessions[jfrom].connect() 
             self.update_db(jfrom)
