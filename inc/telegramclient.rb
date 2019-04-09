@@ -32,7 +32,7 @@ class TelegramClient
         @files_dir = File.dirname(__FILE__) + '/../sessions/' + @xmpp.user_jid + '/files/'
 
         # spawn telegram client and specify callback handlers 
-        @logger.info 'Spawning Telegram client instance..'        
+        @logger.info 'Connecting to Telegram network..'        
         @client = TD::Client.new(database_directory: 'sessions/' + @xmpp.user_jid, files_directory: 'sessions/' + @xmpp.user_jid + '/files/') # create telegram client instance
         @client.on(TD::Types::Update::AuthorizationState) do |update| self.auth_handler(update) end # register auth update handler 
         @client.on(TD::Types::Update::NewMessage) do |update| self.message_handler(update) end # register new message update handler 
@@ -49,7 +49,7 @@ class TelegramClient
                 self.process_outgoing_msg(@xmpp.message_queue.pop) unless @xmpp.message_queue.empty? # found something in message queue 
                 self.process_auth(:code, @xmpp.tg_auth_data[:code]) unless @xmpp.tg_auth_data[:code].nil? # found code in auth queue
                 self.process_auth(:password, @xmpp.tg_auth_data[:password]) unless @xmpp.tg_auth_data[:password].nil? # found 2fa password in auth queue
-                sleep 0.5
+                sleep 0.1
             end
         rescue Exception => e
             @logger.error 'Unexcepted exception! %s' % e.to_s
@@ -83,7 +83,6 @@ class TelegramClient
         # authorization successful -- indicate that client is online and retrieve contact list  #
         when TD::Types::AuthorizationState::Ready 
             @logger.info 'Authorization successful!'
-            @xmpp.send_message(nil, 'Authorization successful.')
             @xmpp.online!
             @client.get_chats(limit=9999).then { |chats| chats.chat_ids.each do |chat_id| self.process_chat_info(chat_id) end }.wait 
             @logger.info "Contact list updating finished"
@@ -96,7 +95,7 @@ class TelegramClient
     
     # message from telegram network handler # 
     def message_handler(update)
-        @logger.info 'Got NewMessage update'
+        @logger.debug 'Got NewMessage update'
         @logger.debug update.message.to_json
 
         return if update.message.is_outgoing # ignore outgoing 
@@ -127,14 +126,14 @@ class TelegramClient
     
     # new chat update -- when tg client discovers new chat #
     def new_chat_handler(update)   
-        @logger.info 'Got NewChat update'
+        @logger.debug 'Got NewChat update'
         @logger.debug update.to_json
         self.process_chat_info(update.chat.id)
     end
 
     # edited msg #
     def message_edited_handler(update)
-        @logger.info 'Got MessageEdited update'
+        @logger.debug 'Got MessageEdited update'
         @logger.debug update.to_json
         
         # formatting
@@ -144,7 +143,7 @@ class TelegramClient
 
     # deleted msg #
     def message_deleted_handler(update)
-        @logger.info 'Got MessageDeleted update'
+        @logger.debug 'Got MessageDeleted update'
         @logger.debug update.to_json
         return if not update.is_permanent
         text = "[MSG ID %s DELETE]" % update.message_ids.join(',')
@@ -153,7 +152,7 @@ class TelegramClient
 
     # file msg -- symlink to download path #
     def file_handler(update)
-        @logger.info 'Got File update'
+        @logger.debug 'Got File update'
         @logger.debug update.to_json
         if update.file.local.is_downloading_completed then
             fname = update.file.local.path.to_s
@@ -165,7 +164,7 @@ class TelegramClient
     
     # status update handler #
     def status_update_handler(update)
-        @logger.info 'Got new StatusUpdate'
+        @logger.debug 'Got new StatusUpdate'
         @logger.debug update.to_json
         presence, message = self.format_status(update.status)
         @xmpp.presence_update(update.user_id.to_s, presence, message)
@@ -178,14 +177,15 @@ class TelegramClient
     
     # processing authorization #
     def process_auth(typ, data)
-        @logger.info 'Check authorization :%s..' % typ.to_s
+        @logger.debug 'check_authorization :%s..' % typ.to_s
         @client.check_authentication_code(data) if typ == :code 
         @client.check_authentication_password(data) if typ == :password
+        @xmpp.tg_auth_data = {}
     end
     
     # processing outgoing message from queue #
     def process_outgoing_msg(msg)
-        @logger.info 'Sending message to user/chat <%s> within Telegram network..' % msg[:to]
+        @logger.debug 'Sending message to user/chat <%s> within Telegram network..' % msg[:to]
         chat_id, text, reply_to = msg[:to].to_i, msg[:text], 0
         
         # handling replies #
@@ -209,7 +209,7 @@ class TelegramClient
 
     # update users information and save it to cache #
     def process_chat_info(chat_id)
-        @logger.info 'Updating chat id %s..' % chat_id.to_s
+        @logger.debug 'Updating chat id %s..' % chat_id.to_s
 
         # fullfil cache.. pasha durov, privet. #
         @client.get_chat(chat_id).then { |chat|  
@@ -219,7 +219,7 @@ class TelegramClient
 
         # send to roster #
         if @cache[:chats].key? chat_id 
-            @logger.info "Sending presence to roster.."
+            @logger.debug "Sending presence to roster.."
             @xmpp.subscription_req(chat_id.to_s, @cache[:chats][chat_id].title.to_s) # send subscription request
             case @cache[:chats][chat_id].type # determine status / presence
                 when TD::Types::ChatType::BasicGroup, TD::Types::ChatType::Supergroup then presence, status = :chat, @cache[:chats][chat_id].title.to_s
@@ -231,7 +231,7 @@ class TelegramClient
     
     # update user info #
     def process_user_info(user_id)
-        @logger.info 'Updating user id %s..' % user_id.to_s
+        @logger.debug 'Updating user id %s..' % user_id.to_s
         @client.get_user(user_id).then { |user| @cache[:users][user_id] = user }.wait
     end
     
@@ -266,7 +266,7 @@ class TelegramClient
     def format_username(user_id)
         if not @cache[:users].key? user_id then self.process_user_info(user_id) end
         id = (@cache[:users][user_id].username == '') ? user_id : @cache[:users][user_id].username
-        name = '%s %s (@%s)' % [@cache[:users][user_id].first_name, @cache[:users][user_id].last_name, @cache[:users][user_id].username]
+        name = '%s %s (@%s)' % [@cache[:users][user_id].first_name, @cache[:users][user_id].last_name, id]
         name.sub! ' ]', ']'
         return name 
     end
