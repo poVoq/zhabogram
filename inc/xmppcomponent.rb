@@ -1,16 +1,6 @@
-require 'xmpp4r'
 require 'sqlite3'
 require 'fileutils'
-
-# 
-# todo: #
-#
-# last message edit / delete
-# join chat / add contact / get information by link/id/@username
-# chat admin commands (kick, invite, ban, etc.)
-# sending files 
-# vcards
-#
+require 'xmpp4r'
 
 #############################
 ### Some constants #########
@@ -69,7 +59,7 @@ class XMPPComponent
             @@transport.auth( @config[:secret] ) 
             @@transport.add_message_callback do |msg| msg.first_element_text('body') ? self.message_handler(msg) : nil  end 
             @@transport.add_presence_callback do |presence| self.presence_handler(presence)  end 
-            # @@transport.add_iq_callback do |iq| self.iq_handler(iq)  end 
+            #@@transport.add_iq_callback do |iq| self.iq_handler(iq)  end 
             @logger.info "Connection established"
             self.load_db()
             @logger.info 'Found %s sessions in database.' % @sessions.count
@@ -152,14 +142,14 @@ end
 ## XMPP Session Class #######
 #############################
 class XMPPSession < XMPPComponent
-    attr_reader :user_jid, :tg_login, :message_queue
-    attr_accessor :online, :tg_auth_data
+    attr_reader :user_jid, :tg_login
+    attr_accessor :online, :message_queue, :auth_data
     
     # start XMPP user session and Telegram client instance #
     def initialize(jid, tg_login)
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[XMPPSession: %s/%s]' % [jid, tg_login] # init logger 
         @logger.info "Initializing new session.."
-        @user_jid, @tg_login, @tg_auth_data, @message_queue = jid, tg_login, {code: nil, password: nil}, Queue.new() # init class variables 
+        @user_jid, @tg_login, @auth_data, @message_queue = jid, tg_login, Hash.new(), Queue.new() # init class variables 
     end
     
     # connect to tg #
@@ -185,31 +175,20 @@ class XMPPSession < XMPPComponent
         @@transport.send(reply)
     end    
     
-    # subscription request to current user via XMPP #
-    def subscription_req(from, nickname = nil)
-        @logger.debug "Subscription request from %s.." %from.to_s
-        req = Jabber::Presence.new()
-        req.from = from.nil? ? @@transport.jid : from.to_s+'@'+@@transport.jid.to_s # presence <from> 
-        req.to = @user_jid # presence <to>
-        req.type = :subscribe
-        req.add_element('nick', {'xmlns' => 'http://jabber.org/protocol/nick'} ).add_text(nickname) unless nickname.nil?
-        @logger.debug req
-        @@transport.send(req)
-    end
-    
     # presence update #
-    def presence_update(from, status, message, type = nil)
+    def presence_update(from, type = nil, show = nil, status = nil, nickname = nil)
         @logger.debug "Presence update request from %s.." %from.to_s
         req = Jabber::Presence.new()
         req.from = from.nil? ? @@transport.jid : from.to_s+'@'+@@transport.jid.to_s # presence <from> 
         req.to = @user_jid # presence <to>
-        req.show = status unless status.nil? # presence <show>
         req.type = type unless type.nil? # pres. type
-        req.status = message # presence message 
+        req.show = show unless show.nil? # presence <show>
+        req.status = status unless status.nil? # presence message 
+        req.add_element('nick', {'xmlns' => 'http://jabber.org/protocol/nick'} ).add_text(nickname) unless nickname.nil? # nickname 
         @logger.debug req
         @@transport.send(req)
     end
-        
+    
     ###########################################
         
     # queue message (we will share this queue within :message_queue to Telegram client thread) #
@@ -218,16 +197,16 @@ class XMPPSession < XMPPComponent
         @message_queue << {to: to.split('@')[0], text: text}
     end
 
-    # enter auth data (we will share this data within :tg_auth_data to Telegram client thread ) #
+    # enter auth data (we will share this data within :auth_data {} to Telegram client thread ) #
     def enter_auth_data(typ, data) 
         @logger.info "Authenticating in Telegram network with :%s" % typ
-        @tg_auth_data[typ.to_sym] = data
+        @auth_data[typ.to_sym] = data
     end 
     
     ###########################################
 
     # session status #
     def online?() @online end
-    def online!() @logger.info "Connection established"; @online = true; self.subscription_req(nil); self.presence_update(nil, nil, "Logged in as " + @tg_login.to_s) end
-    def offline!() @online = false; self.presence_update(nil, nil, "Logged out", :unavailable); end
+    def online!() @logger.info "Connection established"; @online = true; self.presence_update(nil, :subscribe); self.presence_update(nil, nil, nil, "Logged in as " + @tg_login.to_s) end
+    def offline!() @online = false; self.presence_update(nil, :unavailable, nil, "Logged out"); end
 end

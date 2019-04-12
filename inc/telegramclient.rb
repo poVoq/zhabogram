@@ -8,7 +8,7 @@ class TelegramClient
         @@loglevel = params['loglevel'] || Logger::DEBUG
         @@content_path = params['content_path'] || '/tmp'
         @@content_link = params['content_link'] || 'https://localhost/tg_media'
-        @@content_size_limit = params["content_size_limit"] || 100 * 1024 * 1024 
+        @@content_upload_prefix = params["content_upload_prefix"] || 'https://localhost/upload/'
         TD.configure do |config|
             config.lib_path = params['path'] || 'lib/' # we hope it's here
             config.client.api_id = params['api_id'] || '17349' # desktop telegram app
@@ -40,6 +40,7 @@ class TelegramClient
         @client.on(TD::Types::Update::DeleteMessages) do |update| self.message_deleted_handler(update) end # register msg del handler
         @client.on(TD::Types::Update::File) do |update| self.file_handler(update) end # register file handler 
         @client.on(TD::Types::Update::NewChat) do |update| self.new_chat_handler(update) end # register new chat handler 
+        @client.on(TD::Types::Update::User) do |update| self.user_handler(update) end # new user update? 
         @client.on(TD::Types::Update::UserStatus) do |update| self.status_update_handler(update) end # register status handler 
         @client.connect # 
         
@@ -47,8 +48,7 @@ class TelegramClient
         begin
             while not @xmpp.online? === false do 
                 self.process_outgoing_msg(@xmpp.message_queue.pop) unless @xmpp.message_queue.empty? # found something in message queue 
-                self.process_auth(:code, @xmpp.tg_auth_data[:code]) unless @xmpp.tg_auth_data[:code].nil? # found code in auth queue
-                self.process_auth(:password, @xmpp.tg_auth_data[:password]) unless @xmpp.tg_auth_data[:password].nil? # found 2fa password in auth queue
+                self.process_auth(@xmpp.auth_data.shift) unless @xmpp.auth_data.empty? # found something in auth queue
                 sleep 0.1
             end
         rescue Exception => e
@@ -84,7 +84,8 @@ class TelegramClient
         when TD::Types::AuthorizationState::Ready 
             @logger.info 'Authorization successful!'
             @xmpp.online!
-            @client.get_chats(limit=9999).then { |chats| chats.chat_ids.each do |chat_id| self.process_chat_info(chat_id) end }.wait 
+            @client.get_me().then { |user| @me = user }.wait 
+            @client.get_chats(limit=9999).wait
             @logger.info "Contact list updating finished"
             self.sync_roster()
         when TD::Types::AuthorizationState::Closed
@@ -92,30 +93,64 @@ class TelegramClient
             @xmpp.offline!
         end        
     end
-    
+
     # message from telegram network handler # 
     def message_handler(update)
         @logger.debug 'Got NewMessage update'
         @logger.debug update.message.to_json
 
-        return if update.message.is_outgoing # ignore outgoing 
-        return if not @cache[:chats].key? update.message.chat_id
+        return if not @cache[:chats].key? update.message.chat_id # we do not know about this chat, ignore it
+        return if update.message.is_outgoing and update.message.sending_state.instance_of? TD::Types::MessageSendingState::Pending # ignore self outgoing messages
         
         # media? #
-        content = nil
-        @logger.debug update.message.content.to_json
-        case update.message.content #  content = [content, name, mime]
-            when TD::Types::MessageContent::Photo  then content = [update.message.content.photo.sizes[-1].photo, update.message.content.photo.id.to_s + '.jpg', 'image/jpeg']
-            when TD::Types::MessageContent::Sticker  then content = [update.message.content.sticker.sticker, update.message.content.sticker.emoji.to_s + '.webp', 'image/webp']
-            when TD::Types::MessageContent::Audio then content = [update.message.content.audio.audio, update.message.content.audio.file_name.to_s, update.message.content.audio.mime_type.to_s] 
-            when TD::Types::MessageContent::Document then content = [update.message.content.document.document, update.message.content.document.file_name.to_s, update.message.content.document.mime_type.to_s]
+        file = nil
+        text = ''
+        case update.message.content 
+        when TD::Types::MessageContent::Photo # photos 
+            file = update.message.content.photo.sizes[-1].photo
+            text = "%s.jpg (image/jpeg), %d bytes | %s | %s" % [update.message.content.photo.id.to_s, file.size.to_i, self.format_content_link(file.remote.id, 'image.jpg'), update.message.content.caption.text.to_s]
+        when TD::Types::MessageContent::Animation  # "gif" (mp4) animations 
+            file = update.message.content.animation.animation
+            text = "gif: %s | %s" % [update.message.content.animation.file_name, self.format_content_link(file.remote.id, 'video.mp4')]
+        when TD::Types::MessageContent::Sticker  # stickers 
+            file = update.message.content.sticker.sticker
+            text = "sticker: %s | %s" % [update.message.content.sticker.emoji.to_s, self.format_content_link(file.remote.id, 'sticker.webp')]
+        when TD::Types::MessageContent::Audio # music files
+            file = update.message.content.audio.audio 
+            text = "%s (%s), %d bytes | %s | %s" % [update.message.content.audio.file_name.to_s, update.message.content.audio.mime_type.to_s, file.size.to_i, self.format_content_link(file.remote.id, update.message.content.audio.file_name.to_s), update.message.content.caption.text.to_s]
+        when TD::Types::MessageContent::Video # video files
+            file = update.message.content.video.video 
+            text = "%s (%s), %d bytes | %s | %s" % [update.message.content.video.file_name.to_s, update.message.content.video.mime_type.to_s, file.size.to_i, self.format_content_link(file.remote.id, update.message.content.video.file_name.to_s), update.message.content.caption.text.to_s]
+        when TD::Types::MessageContent::VoiceNote # voice messages
+            file = update.message.content.voice_note.voice
+            text = "voice message (%i s.) | %s" % [update.message.content.voice_note.duration, self.format_content_link(file.remote.id, 'voice.oga')]
+        when TD::Types::MessageContent::Document # documents 
+            file = update.message.content.document.document
+            text = "%s (%s), %d bytes | %s | %s" % [update.message.content.document.file_name.to_s, update.message.content.document.mime_type.to_s, file.size.to_i, self.format_content_link(file.remote.id, update.message.content.document.file_name.to_s), update.message.content.caption.text.to_s]
+        when TD::Types::MessageContent::ChatJoinByLink # joined member
+            text = "joined"
+        when TD::Types::MessageContent::ChatAddMembers # add members
+            text = "added "
+            update.message.content.member_user_ids.each do |member| text = text + self.format_username(member) + ' ' end
+        when TD::Types::MessageContent::ChatDeleteMember # kicked member
+            text = "removed %s" % self.format_username(update.message.content.user_id)
+        when TD::Types::MessageContent::PinMessage # pinned message
+            @client.get_message(update.message.chat_id, update.message.content.message_id).then { |message| text = "pinned message: %s" % message.content.text.text.to_s }.wait 
+        when TD::Types::MessageContent::ChatChangeTitle # changed chat title
+            text = "chat title set to: %s" % update.message.content.title.to_s
+        when TD::Types::MessageContent::Location # location
+            location = "%s,%s" % [update.message.content.location.latitude.to_s, update.message.content.location.longitude.to_s]
+            text = "coordinates: %s | https://www.google.com/maps/search/%s/" %  [location, location]
+        when TD::Types::MessageContent::Text # plain text
+            text = update.message.content.text.text.to_s
+        else
+            text = "unknown message type %s" % update.message.content.class
         end 
-        @client.download_file(content[0].id) if content  # download it if already not
+        @client.download_file(file.id) if file  # download it if already not
                 
-        # formatting...
-        text = (content.nil?) ? update.message.content.text.text.to_s : update.message.content.caption.text.to_s
-        text = "[%s (%s), %d bytes] | %s | %s" % [content[1], content[2], content[0].size.to_i, self.format_content_link(content[0].remote.id, content[1]), text] if content   # content format 
-        text = "[FWD From %s] %s" % [self.format_username(update.message.forward_info.sender_user_id), text] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd 
+        # forwards, replies and message id..
+        text = "[Forward from %s] %s" % [self.format_username(update.message.forward_info.sender_user_id), text] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd  from user 
+        text = "[Forward from channel %s (%s)] %s" % [update.message.forward_info.chat_id.to_s, update.message.forward_info.author_signature.to_s, text] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedPost  # fwd from chat 
         text = "[Reply to MSG %s] %s" % [update.message.reply_to_message_id.to_s, text]  if update.message.reply_to_message_id.to_i != 0 # reply
         text = "[MSG %s] [%s] %s" % [update.message.id.to_s, self.format_username(update.message.sender_user_id), text] # username/id
         
@@ -129,6 +164,13 @@ class TelegramClient
         @logger.debug 'Got NewChat update'
         @logger.debug update.to_json
         self.process_chat_info(update.chat.id)
+    end
+
+    # user -- something changed in user data #
+    def user_handler(update)   
+        @logger.debug 'Got User update'
+        @logger.debug update.to_json
+        self.process_user_info(update.user.id)
     end
 
     # edited msg #
@@ -166,8 +208,8 @@ class TelegramClient
     def status_update_handler(update)
         @logger.debug 'Got new StatusUpdate'
         @logger.debug update.to_json
-        presence, message = self.format_status(update.status)
-        @xmpp.presence_update(update.user_id.to_s, presence, message)
+        return if update.user_id == @me.id # ignore self statuses
+        self.process_status_update(update.user_id, update.status)
     end
 
     
@@ -176,35 +218,107 @@ class TelegramClient
     ###########################################
     
     # processing authorization #
-    def process_auth(typ, data)
-        @logger.debug 'check_authorization :%s..' % typ.to_s
-        @client.check_authentication_code(data) if typ == :code 
-        @client.check_authentication_password(data) if typ == :password
-        @xmpp.tg_auth_data = {}
+    def process_auth(auth_data)
+        @logger.debug 'check_authorization :%s..' % auth_data[0]
+        @client.check_authentication_code(auth_data[1]) if auth_data[0] == :code
+        @client.check_authentication_password(auth_data[1]) if auth_data[0] == :password
+    end
+
+    # /command #
+    def process_command(chat_id, text)
+        splitted = text.split # splitted[0] = command, splitted[1] = argument
+        splitted = ['/sed', text[3..-1]] if text[0..2] == '/s/' # sed-like edit 
+        resolved = nil; response = nil
+
+        # if second argument starts with @, try to resolve it
+        @client.search_public_chat(splitted[1][1..-1]).then {|chat| resolved = chat}.wait if splitted[1] and splitted[1][0] == '@'
+
+        case splitted[0] 
+        when '/info' # retrieve some information by link, @username or username
+            response = "Contact id: %s\nContact name: %s\nContact type: %s" % [resolved.id.to_s, resolved.title.to_s, resolved.type.class.to_s] if resolved
+        when '/add' # open new private chat by its id
+            chat = (resolved) ? resolved.id : splitted[1].to_i
+            @client.create_private_chat(chat).wait
+            self.process_chat_info(chat)
+        when '/join' # join group/supergroup by invite link or by id 
+            chat = splitted[1]
+            chat.start_with? "http" ? @client.join_chat_by_invite_link(chat).wait : @client.join_chat(chat.to_i).wait
+        when '/invite' # invite user to chat
+            @client.add_chat_member(chat_id, response.id).wait if resolved
+        when '/kick' #  removes user from chat
+            @client.set_chat_member_status(chat_id, response.id, TD::Types::ChatMemberStatus::Left.new()).wait if resolved
+        when '/ban' #  removes user from chat. argument = hours to ban.
+            until_date = (splitted[1]) ? Time.now.getutc.to_i + splitted[1].to_i * 3600 : 0
+            @client.set_chat_member_status(chat_id, response.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: until_date)).wait if resolved
+        when '/block' # add user to blacklist 
+            @client.block_user(chat_id) 
+        when '/unblock' # add user to blacklist 
+            @client.unblock_user(chat_id) 
+        when '/leave', '/delete' #  delete / leave chat
+            @client.close_chat(chat_id).wait
+            @client.leave_chat(chat_id).wait
+            @client.delete_chat_history(chat_id, true).wait
+            @xmpp.presence_update(chat_id, :unsubscribed) 
+            @xmpp.presence_update(chat_id, :unavailable)
+            @cache[:chats].delete(chat_id)
+        when '/sed' # sed-like edit
+            sed = splitted[1].split('/')
+            @client.search_chat_messages(chat_id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs| 
+                original = msgs.messages[0].content.text.text.to_s
+                edited = (sed[0] != '' ) ? original.gsub(Regexp.new(sed[0]), sed[1]) : sed[1]
+                @client.edit_message_text(chat_id, msgs.messages[0].id, TD::Types::InputMessageContent::Text.new(:text => { :text => edited, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )) if edited != original
+            }.wait
+        when '/d' # delete last message
+            @client.search_chat_messages(chat_id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs|   
+                @client.delete_messages(chat_id, [msgs.messages[0].id], true)
+            }.wait
+        else
+            response = 'Unknown command. 
+            
+            /s/mitsake/mistake/ — Edit last message
+            /d — Delete last message
+            
+            /info @username — Search public chat or user
+            /add @username or id — Creates conversation with specified user
+            /join chat_link or id — Joins chat by its link or id
+            /invite @username — Invites @username to current chat 
+            /kick @username — Removes @username from current chat 
+            /ban @username [hours] — Bans @username in current chat for [hours] hrs or forever if [hours] not specified
+            /block — Blacklists current user
+            /unblock — Removes current user from blacklist
+            /leave — Leave current chat
+            /delete — Delete current chat
+            ' 
+        end
+        
+        @xmpp.send_message(chat_id, response) if response
     end
     
     # processing outgoing message from queue #
     def process_outgoing_msg(msg)
         @logger.debug 'Sending message to user/chat <%s> within Telegram network..' % msg[:to]
         chat_id, text, reply_to = msg[:to].to_i, msg[:text], 0
+
+        # processing /commands #
+        return self.process_command(chat_id, text) if text[0] == '/'
         
         # handling replies #
-        if msg[:text][0] == '>' then 
-            splitted = msg[:text].split("\n")
-            reply_to, reply_text = splitted[0].scan(/\d/)[0] || 0
+        if text[0] == '>' then 
+            splitted = text.split("\n")
+            reply_to = splitted[0].scan(/\d/).join('') || 0
             text = splitted.drop(1).join("\n") if reply_to != 0 
         end
         
-        # handle commands... (todo) #
-        #
+        # handling files received from xmpp #
+        if text.start_with? @@content_upload_prefix  then
+            message = TD::Types::InputMessageContent::Document.new(document: TD::Types::InputFile::Remote.new(id: text), caption: { :text => '', :entities => []})
+        else
+            message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )
+        end
         
-        # mark all messages within this chat as read #
-        @client.view_messages(chat_id, [@cache[:unread_msg][chat_id]], force_read: true) if @cache[:unread_msg][chat_id]
-        @cache[:unread_msg][chat_id] = nil
-        
-        # send message #
-        message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => true, :clear_draft => false )
+        # send message and mark chat as read #
         @client.send_message(chat_id, message, reply_to_message_id: reply_to)
+        @client.view_messages(chat_id, [@cache[:unread_msg].delete(chat_id)], force_read: true) if @cache[:unread_msg][chat_id]
     end
 
     # update users information and save it to cache #
@@ -220,48 +334,48 @@ class TelegramClient
         # send to roster #
         if @cache[:chats].key? chat_id 
             @logger.debug "Sending presence to roster.."
-            @xmpp.subscription_req(chat_id.to_s, @cache[:chats][chat_id].title.to_s) # send subscription request
-            case @cache[:chats][chat_id].type # determine status / presence
-                when TD::Types::ChatType::BasicGroup, TD::Types::ChatType::Supergroup then presence, status = :chat, @cache[:chats][chat_id].title.to_s
-                when TD::Types::ChatType::Private then presence, status = self.format_status(@cache[:users][chat_id].status)
-            end
-            @xmpp.presence_update(chat_id.to_s, presence, status) # send presence
+            @xmpp.presence_update(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s) # send subscription request
+            @xmpp.presence_update(chat_id.to_s, nil, :chat, nil, @cache[:chats][chat_id].title.to_s) if chat_id < 0  # send :chat status if its group/supergroup
         end
     end
     
-    # update user info #
+    # update user info in cache and sync status to roster if needed #
     def process_user_info(user_id)
         @logger.debug 'Updating user id %s..' % user_id.to_s
-        @client.get_user(user_id).then { |user| @cache[:users][user_id] = user }.wait
+        @client.get_user(user_id).then { |user| 
+            @cache[:users][user_id] = user  # add to cache 
+            self.process_status_update(user_id, user.status) # status update
+        }.wait
+    end
+
+    # convert telegram status to XMPP one
+    def process_status_update(user_id, status)
+        @logger.debug "Processing status update for user id %s.." % user_id.to_s 
+        xmpp_show, xmpp_status = nil, ''
+        case status 
+        when TD::Types::UserStatus::Online 
+            xmpp_show = nil
+            xmpp_status = "Online"
+        when TD::Types::UserStatus::Offline 
+            xmpp_show = (Time.now.getutc.to_i - status.was_online.to_i < 3600) ? :away : :xa
+            xmpp_status = DateTime.strptime(status.was_online.to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
+        when TD::Types::UserStatus::Recently 
+            xmpp_show = :dnd
+            xmpp_status = "Last seen recently"
+        when TD::Types::UserStatus::LastWeek 
+            xmpp_show = :unavailable
+            xmpp_status = "Last seen last week"
+        when TD::Types::UserStatus::LastMonth 
+            xmpp_show = :unavailable
+            xmpp_status = "Last seen last month"
+        end
+        @xmpp.presence_update(user_id.to_s, nil, xmpp_show, xmpp_status)
     end
     
     ###########################################
     ## Format functions #######################
     ###########################################
-    
-    # convert telegram status to XMPP one
-    def format_status(status)
-        presence, message = nil, ''
-        case status 
-        when TD::Types::UserStatus::Online 
-            presence = nil
-            message = "Online"
-        when TD::Types::UserStatus::Offline 
-            presence = (Time.now.getutc.to_i - status.was_online.to_i < 3600) ? :away : :xa
-            message = DateTime.strptime(status.was_online.to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
-        when TD::Types::UserStatus::Recently 
-            presence = :dnd
-            message = "Last seen recently"
-        when TD::Types::UserStatus::LastWeek 
-            presence = :unavailable
-            message = "Last seen last week"
-        when TD::Types::UserStatus::LastMonth 
-            presence = :unavailable
-            message = "Last seen last month"
-        end
-        return presence, message
-    end
-    
+
     # format tg user name #
     def format_username(user_id)
         if not @cache[:users].key? user_id then self.process_user_info(user_id) end

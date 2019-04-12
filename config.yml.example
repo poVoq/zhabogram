@@ -9,6 +9,7 @@ telegram:
     loglevel: 0
     content_path: '/var/www/tg_media'
     content_link: 'https://localhost/tg_media'
+    content_upload_prefix: 'https://localhost/upload'
     
 xmpp:
 
