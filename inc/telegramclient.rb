@@ -232,18 +232,17 @@ class TelegramClient
         case splitted[0] 
         when '/add' # open new private chat by its id
             chat = (resolved) ? resolved.id : splitted[1].to_i
-            @client.create_private_chat(chat).wait
-            self.process_chat_info(chat)
+            self.process_chat_info(chat) if chat != 0
         when '/join' # join group/supergroup by invite link or by id 
-            chat = splitted[1]
-            chat.start_with? "http" ? @client.join_chat_by_invite_link(chat).wait : @client.join_chat(chat.to_i).wait
+            chat = (resolved) ? resolved.id : splitted[1]
+            chat.to_s[0..3] == "http" ? @client.join_chat_by_invite_link(chat).wait : @client.join_chat(chat.to_i).wait
         when '/invite' # invite user to chat
-            @client.add_chat_member(chat_id, response.id).wait if resolved
+            @client.add_chat_member(chat_id, resolved.id).wait if resolved
         when '/kick' #  removes user from chat
-            @client.set_chat_member_status(chat_id, response.id, TD::Types::ChatMemberStatus::Left.new()).wait if resolved
+            @client.set_chat_member_status(chat_id, resolved.id, TD::Types::ChatMemberStatus::Left.new()).wait if resolved
         when '/ban' #  removes user from chat. argument = hours to ban.
             until_date = (splitted[1]) ? Time.now.getutc.to_i + splitted[1].to_i * 3600 : 0
-            @client.set_chat_member_status(chat_id, response.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: until_date)).wait if resolved
+            @client.set_chat_member_status(chat_id, resolved.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: until_date)).wait if resolved
         when '/block' # add user to blacklist 
             @client.block_user(chat_id) 
         when '/unblock' # add user to blacklist 
@@ -324,7 +323,7 @@ class TelegramClient
             @cache[:chats][chat_id] = chat   # cache chat 
             @client.download_file(chat.photo.small.id) if chat.photo # download userpic
             @xmpp.presence(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s)  # send subscription request
-            @xmpp.presence(chat_id.to_s, nil, :chat, nil, @cache[:chats][chat_id].title.to_s) if chat.type.instance_of? TD::Types::ChatType::BasicGroup orchat.type.instance_of? TD::Types::ChatType::Supergroup  # send :chat status if its group/supergroup
+            @xmpp.presence(chat_id.to_s, nil, :chat, nil, @cache[:chats][chat_id].title.to_s) if chat.type.instance_of? TD::Types::ChatType::BasicGroup or chat.type.instance_of? TD::Types::ChatType::Supergroup  # send :chat status if its group/supergroup
             self.process_user_info(chat.type.user_id) if chat.type.instance_of? TD::Types::ChatType::Private # process user if its a private chat 
         }.wait
     end

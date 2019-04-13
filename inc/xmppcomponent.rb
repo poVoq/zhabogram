@@ -1,5 +1,6 @@
 require 'sqlite3'
 require 'xmpp4r'
+require 'digest' 
 
 #############################
 ### Some constants #########
@@ -102,14 +103,15 @@ class XMPPComponent
     def iq_handler(iq)
         @logger.debug "New iq received"
         @logger.debug(iq.to_s)
-        reply = iq.answer
         
         if iq.vcard and @sessions.key? iq.from.bare.to_s then
             vcard = @sessions[iq.from.bare.to_s].make_vcard(iq.to.to_s)
+            reply = iq.answer
             reply.type = :result
             reply.elements["vCard"] = vcard
-            @@transport.send(reply)
+            @@transport.send(reply)            
         else
+            reply = iq.answer
             reply.type = :error
         end
         @@transport.send(reply)
