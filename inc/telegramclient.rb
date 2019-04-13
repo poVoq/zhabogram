@@ -1,5 +1,6 @@
 require 'tdlib-ruby'
 require 'digest' 
+require 'base64'
 
 class TelegramClient
 
@@ -11,12 +12,16 @@ class TelegramClient
         @@content_upload_prefix = params["content_upload_prefix"] || 'https://localhost/upload/'
         TD.configure do |config|
             config.lib_path = params['path'] || 'lib/' # we hope it's here
-            config.client.api_id = params['api_id'] || '17349' # desktop telegram app
-            config.client.api_hash = params['api_hash'] || '344583e45741c457fe1862106095a5eb' # desktop telegram app
-            config.client.device_model = params['useragent'] || 'Zhabogram XMPP Gateway'
-            config.client.application_version = params['version'] || '-1.0' # hmm...
+            config.client.api_id = params['api_id'] || '50322' # telegram app. from debian repositories
+            config.client.api_hash = params['api_hash'] || '9ff1a639196c0779c86dd661af8522ba' # telegram app. from debian repositories
+            config.client.device_model = params['useragent'] || 'Zhabogram'
+            config.client.application_version = params['version'] || '1.0' # hmm...
             config.client.use_test_dc = params['use_test_dc'] || false
             config.client.system_version = '42' # I think I have permission to hardcode The Ultimate Question of Life, the Universe, and Everything?..
+            config.client.use_file_database = false # wow
+            config.client.use_message_database = false # such library 
+            config.client.use_chat_info_database = false # much options
+            config.client.enable_storage_optimizer = false # ...
         end
         TD::Api.set_log_verbosity_level(params['verbosity'] || 1)
     end
@@ -28,7 +33,7 @@ class TelegramClient
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[TelegramClient: %s/%s]' % [xmpp.user_jid, login] # create logger
         @xmpp = xmpp # our XMPP user session. we will send messages back to Jabber through this instance. 
         @login = login # store tg login 
-        @cache = {chats: {}, users: {}, unread_msg: {} } # we will store our cache here
+        @cache = {chats: {}, users: {}, users_fi: {}, unread_msg: {} } # we will store our cache here
         @files_dir = File.dirname(__FILE__) + '/../sessions/' + @xmpp.user_jid + '/files/'
 
         # spawn telegram client and specify callback handlers 
@@ -42,21 +47,8 @@ class TelegramClient
         @client.on(TD::Types::Update::NewChat) do |update| self.new_chat_handler(update) end # register new chat handler 
         @client.on(TD::Types::Update::User) do |update| self.user_handler(update) end # new user update? 
         @client.on(TD::Types::Update::UserStatus) do |update| self.status_update_handler(update) end # register status handler 
-        @client.connect # 
+        @client.connect
         
-        # we will check for outgoing messages in a queue and/or auth data from XMPP thread while XMPP indicates that service is online #
-        begin
-            while not @xmpp.online? === false do 
-                self.process_outgoing_msg(@xmpp.message_queue.pop) unless @xmpp.message_queue.empty? # found something in message queue 
-                self.process_auth(@xmpp.auth_data.shift) unless @xmpp.auth_data.empty? # found something in auth queue
-                sleep 0.1
-            end
-        rescue Exception => e
-            @logger.error 'Unexcepted exception! %s' % e.to_s
-        ensure
-            @logger.info 'Exitting gracefully...'
-            @client.dispose
-        end
     end
     
     ###########################################
@@ -75,22 +67,26 @@ class TelegramClient
          # auth stage 1: wait for authorization code #    
         when TD::Types::AuthorizationState::WaitCode
             @logger.info 'Waiting for authorization code..'
-            @xmpp.send_message(nil, 'Please, enter authorization code via /code 12345')
+            @xmpp.incoming_message(nil, 'Please, enter authorization code via /code 12345')
         # auth stage 2: wait for 2fa passphrase #
         when TD::Types::AuthorizationState::WaitPassword
             @logger.info 'Waiting for 2FA password..'
-            @xmpp.send_message(nil, 'Please, enter 2FA passphrase via /password 12345')
+            @xmpp.incoming_message(nil, 'Please, enter 2FA passphrase via /password 12345')
         # authorization successful -- indicate that client is online and retrieve contact list  #
         when TD::Types::AuthorizationState::Ready 
             @logger.info 'Authorization successful!'
-            @xmpp.online!
             @client.get_me().then { |user| @me = user }.wait 
-            @client.get_chats(limit=9999).wait
+            @client.get_chats(limit=9999) 
             @logger.info "Contact list updating finished"
-            self.sync_roster()
+            @xmpp.online!
+        # closing session: sent offline presences to XMPP user #
+        when TD::Types::AuthorizationState::Closing
+            @logger.info 'Closing session..'
+            self.disconnect()
+        # session closed gracefully
         when TD::Types::AuthorizationState::Closed
             @logger.info 'Session closed.'
-            @xmpp.offline!
+            self.disconnect()
         end        
     end
 
@@ -156,7 +152,7 @@ class TelegramClient
         
         # send and add message id to unreads
         @cache[:unread_msg][update.message.chat_id] = update.message.id
-        @xmpp.send_message(update.message.chat_id.to_s, text)
+        @xmpp.incoming_message(update.message.chat_id.to_s, text)
     end
     
     # new chat update -- when tg client discovers new chat #
@@ -180,7 +176,7 @@ class TelegramClient
         
         # formatting
         text = "[MSG %s EDIT] %s" % [update.message_id.to_s, update.new_content.text.text.to_s]
-        @xmpp.send_message(update.chat_id.to_s, text)        
+        @xmpp.incoming_message(update.chat_id.to_s, text)        
     end
 
     # deleted msg #
@@ -189,7 +185,7 @@ class TelegramClient
         @logger.debug update.to_json
         return if not update.is_permanent
         text = "[MSG ID %s DELETE]" % update.message_ids.join(',')
-        @xmpp.send_message(update.chat_id.to_s, text)                
+        @xmpp.incoming_message(update.chat_id.to_s, text)                
     end
 
     # file msg -- symlink to download path #
@@ -198,7 +194,7 @@ class TelegramClient
         @logger.debug update.to_json
         if update.file.local.is_downloading_completed then
             fname = update.file.local.path.to_s
-            target = "%s/%s%s" % [@@content_path, Digest::SHA256.hexdigest("Current user = %s, File ID = %s" % [@tg_login.to_s, update.file.remote.id]), File.extname(fname)]
+            target = "%s/%s%s" % [@@content_path, Digest::SHA256.hexdigest(update.file.remote.id), File.extname(fname)]
             @logger.debug 'Downloading of <%s> completed! Link to <%s>' % [fname, target] 
             File.symlink(fname, target)
         end
@@ -218,10 +214,10 @@ class TelegramClient
     ###########################################
     
     # processing authorization #
-    def process_auth(auth_data)
-        @logger.debug 'check_authorization :%s..' % auth_data[0]
-        @client.check_authentication_code(auth_data[1]) if auth_data[0] == :code
-        @client.check_authentication_password(auth_data[1]) if auth_data[0] == :password
+    def process_auth(typ, auth_data)
+        @logger.debug 'check_authorization with %s..' % typ
+        @client.check_authentication_code(auth_data) if typ == '/code'
+        @client.check_authentication_password(auth_data) if typ == '/password'
     end
 
     # /command #
@@ -234,8 +230,6 @@ class TelegramClient
         @client.search_public_chat(splitted[1][1..-1]).then {|chat| resolved = chat}.wait if splitted[1] and splitted[1][0] == '@'
 
         case splitted[0] 
-        when '/info' # retrieve some information by link, @username or username
-            response = "Contact id: %s\nContact name: %s\nContact type: %s" % [resolved.id.to_s, resolved.title.to_s, resolved.type.class.to_s] if resolved
         when '/add' # open new private chat by its id
             chat = (resolved) ? resolved.id : splitted[1].to_i
             @client.create_private_chat(chat).wait
@@ -258,8 +252,8 @@ class TelegramClient
             @client.close_chat(chat_id).wait
             @client.leave_chat(chat_id).wait
             @client.delete_chat_history(chat_id, true).wait
-            @xmpp.presence_update(chat_id, :unsubscribed) 
-            @xmpp.presence_update(chat_id, :unavailable)
+            @xmpp.presence(chat_id, :unsubscribed) 
+            @xmpp.presence(chat_id, :unavailable)
             @cache[:chats].delete(chat_id)
         when '/sed' # sed-like edit
             sed = splitted[1].split('/')
@@ -278,7 +272,6 @@ class TelegramClient
             /s/mitsake/mistake/ — Edit last message
             /d — Delete last message
             
-            /info @username — Search public chat or user
             /add @username or id — Creates conversation with specified user
             /join chat_link or id — Joins chat by its link or id
             /invite @username — Invites @username to current chat 
@@ -291,13 +284,12 @@ class TelegramClient
             ' 
         end
         
-        @xmpp.send_message(chat_id, response) if response
+        @xmpp.incoming_message(chat_id, response) if response
     end
     
     # processing outgoing message from queue #
-    def process_outgoing_msg(msg)
-        @logger.debug 'Sending message to user/chat <%s> within Telegram network..' % msg[:to]
-        chat_id, text, reply_to = msg[:to].to_i, msg[:text], 0
+    def process_outgoing_msg(chat_id, text)
+        @logger.debug 'Sending message to user/chat <%s> within Telegram network..' % chat_id.to_s
 
         # processing /commands #
         return self.process_command(chat_id, text) if text[0] == '/'
@@ -307,6 +299,8 @@ class TelegramClient
             splitted = text.split("\n")
             reply_to = splitted[0].scan(/\d/).join('') || 0
             text = splitted.drop(1).join("\n") if reply_to != 0 
+        else
+            reply_to = 0
         end
         
         # handling files received from xmpp #
@@ -328,15 +322,11 @@ class TelegramClient
         # fullfil cache.. pasha durov, privet. #
         @client.get_chat(chat_id).then { |chat|  
             @cache[:chats][chat_id] = chat   # cache chat 
-            self.process_user_info(chat.type.user_id) if chat.type.instance_of? TD::Types::ChatType::Private # cache user if it is private chat
+            @client.download_file(chat.photo.small.id) if chat.photo # download userpic
+            @xmpp.presence(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s)  # send subscription request
+            @xmpp.presence(chat_id.to_s, nil, :chat, nil, @cache[:chats][chat_id].title.to_s) if chat.type.instance_of? TD::Types::ChatType::BasicGroup orchat.type.instance_of? TD::Types::ChatType::Supergroup  # send :chat status if its group/supergroup
+            self.process_user_info(chat.type.user_id) if chat.type.instance_of? TD::Types::ChatType::Private # process user if its a private chat 
         }.wait
-
-        # send to roster #
-        if @cache[:chats].key? chat_id 
-            @logger.debug "Sending presence to roster.."
-            @xmpp.presence_update(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s) # send subscription request
-            @xmpp.presence_update(chat_id.to_s, nil, :chat, nil, @cache[:chats][chat_id].title.to_s) if chat_id < 0  # send :chat status if its group/supergroup
-        end
     end
     
     # update user info in cache and sync status to roster if needed #
@@ -345,6 +335,9 @@ class TelegramClient
         @client.get_user(user_id).then { |user| 
             @cache[:users][user_id] = user  # add to cache 
             self.process_status_update(user_id, user.status) # status update
+        }.wait
+        @client.get_user_full_info(user_id).then{ |user_info|
+            @cache[:users_fi][user_id] = user_info # here is user "bio"
         }.wait
     end
 
@@ -369,7 +362,41 @@ class TelegramClient
             xmpp_show = :unavailable
             xmpp_status = "Last seen last month"
         end
-        @xmpp.presence_update(user_id.to_s, nil, xmpp_show, xmpp_status)
+        @xmpp.presence(user_id.to_s, nil, xmpp_show, xmpp_status) 
+    end
+    
+    # get contact information (for vcard). 
+    def get_contact_info(chat_id)
+        return if not @cache[:chats].key? chat_id  # no such chat #
+    
+        username, firstname, lastname, phone, bio, userpic = nil 
+        title  = @cache[:chats][chat_id].title # <FN>
+
+        # user information 
+        if @cache[:users].key? chat_id then # its an user
+            firstname = @cache[:users][chat_id].first_name # <N/GIVEN>
+            lastname = @cache[:users][chat_id].last_name # <N/FAMILY>
+            username = @cache[:users][chat_id].username  # <NICKNAME>
+            phone = @cache[:users][chat_id].phone_number  # <TEL>
+            bio = @cache[:users_fi][chat_id].bio if @cache[:users_fi].key? chat_id # <DESC>
+        end
+
+        # userpic #
+        if @cache[:chats][chat_id].photo then # we have userpic 
+            userpic = self.format_content_link(@cache[:chats][chat_id].photo.small.remote.id, 'image.jpg', true)
+            userpic = Base64.encode64(IO.binread(userpic)) if File.exist? userpic
+        end
+        
+        # ..
+        return title, username, firstname, lastname, phone, bio, userpic 
+    end
+    
+    # graceful disconnect
+    def disconnect(logout)
+        @logger.info 'Disconnect request received..'
+        @cache[:chats].each_key do |chat_id| @xmpp.presence(chat_id.to_s, :unavailable) end # send offline presences
+        (logout) ? @client.log_out : @client.dispose # logout if needed  
+        @xmpp.offline!
     end
     
     ###########################################
@@ -386,8 +413,9 @@ class TelegramClient
     end
     
     # format content link #
-    def format_content_link(file_id, fname)
-        path = "%s/%s%s" % [@@content_link, Digest::SHA256.hexdigest("Current user = %s, File ID = %s" % [@tg_login.to_s, file_id.to_s]).to_s, File.extname(fname)]
+    def format_content_link(file_id, fname, local = false)
+        prefix = (local) ? @@content_path : @@content_link
+        path = "%s/%s%s" % [prefix, Digest::SHA256.hexdigest(file_id), File.extname(fname)]
         return path
     end
 end

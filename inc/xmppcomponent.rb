@@ -1,5 +1,4 @@
 require 'sqlite3'
-require 'fileutils'
 require 'xmpp4r'
 
 #############################
@@ -9,6 +8,7 @@ require 'xmpp4r'
   /login <telegram_login> — Connect to Telegram network
   /code 12345 — Enter confirmation code
   /password secret — Enter 2FA password
+  /connect ­— Connect to Telegram network if have active session
   /disconnect ­— Disconnect from Telegram network
   /logout — Disconnect from Telegram network and forget session
 '
@@ -59,7 +59,7 @@ class XMPPComponent
             @@transport.auth( @config[:secret] ) 
             @@transport.add_message_callback do |msg| msg.first_element_text('body') ? self.message_handler(msg) : nil  end 
             @@transport.add_presence_callback do |presence| self.presence_handler(presence)  end 
-            #@@transport.add_iq_callback do |iq| self.iq_handler(iq)  end 
+            @@transport.add_iq_callback do |iq| self.iq_handler(iq)  end 
             @logger.info "Connection established"
             self.load_db()
             @logger.info 'Found %s sessions in database.' % @sessions.count
@@ -88,20 +88,31 @@ class XMPPComponent
     def message_handler(msg)
         @logger.info 'New message from [%s] to [%s]' % [msg.from, msg.to]
         return self.process_internal_command(msg.from.bare.to_s, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
-        return @sessions[msg.from.bare.to_s].queue_message(msg.to.to_s, msg.first_element_text('body')) if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
+        return @sessions[msg.from.bare.to_s].tg_outgoing(msg.to.to_s, msg.first_element_text('body')) #if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
     end
     
     def presence_handler(presence) 
         @logger.debug "New presence iq received"
         @logger.debug(presence)
         if presence.type == :subscribe then reply = presence.answer(false); reply.type = :subscribed; @@transport.send(reply); end  # send "subscribed" reply to "subscribe" presence
-        if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s and presence.type == :unavailable then @sessions[presence.from.bare.to_s].offline!; return; end # go offline when received offline presence from jabber user 
+        if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s and presence.type == :unavailable then @sessions[presence.from.bare.to_s].disconnect(); return; end # go offline when received offline presence from jabber user 
         if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s then @sessions[presence.from.bare.to_s].connect(); return; end # connect if we have session 
     end
 
     def iq_handler(iq)
         @logger.debug "New iq received"
-        @logger.debug(iq)
+        @logger.debug(iq.to_s)
+        reply = iq.answer
+        
+        if iq.vcard and @sessions.key? iq.from.bare.to_s then
+            vcard = @sessions[iq.from.bare.to_s].make_vcard(iq.to.to_s)
+            reply.type = :result
+            reply.elements["vCard"] = vcard
+            @@transport.send(reply)
+        else
+            reply.type = :error
+        end
+        @@transport.send(reply)
     end
     
     #############################
@@ -116,16 +127,15 @@ class XMPPComponent
             @sessions[jfrom].connect() 
             self.update_db(jfrom)
         when '/code', '/password'  # pass auth data if we have session 
-            typ = body.split[0][1..8]
-            data = body.split[1]
-            @sessions[jfrom].enter_auth_data(typ, data)  if @sessions.key? jfrom 
+            @sessions[jfrom].tg_auth(body.split[0], body.split[1])  if @sessions.key? jfrom 
+        when '/connect'  # going online 
+            @sessions[jfrom].connect() if @sessions.key? jfrom
         when '/disconnect'  # going offline without destroying a session 
-            @sessions[jfrom].offline! if @sessions.key? jfrom
+            @sessions[jfrom].disconnect() if @sessions.key? jfrom
         when '/logout'  # destroying session
-            @sessions[jfrom].offline! if @sessions.key? jfrom
+            @sessions[jfrom].disconnect(true) if @sessions.key? jfrom
             self.update_db(jfrom, true)
             @sessions.delete(jfrom)
-            FileUtils.remove_dir('sessions/' + jfrom, true)
         else # unknown command -- display help #
             msg = Jabber::Message.new
             msg.from = @@transport.jid
@@ -143,13 +153,13 @@ end
 #############################
 class XMPPSession < XMPPComponent
     attr_reader :user_jid, :tg_login
-    attr_accessor :online, :message_queue, :auth_data
+    attr_accessor :online
     
     # start XMPP user session and Telegram client instance #
     def initialize(jid, tg_login)
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[XMPPSession: %s/%s]' % [jid, tg_login] # init logger 
         @logger.info "Initializing new session.."
-        @user_jid, @tg_login, @auth_data, @message_queue = jid, tg_login, Hash.new(), Queue.new() # init class variables 
+        @user_jid, @tg_login = jid, tg_login 
     end
     
     # connect to tg #
@@ -157,14 +167,20 @@ class XMPPSession < XMPPComponent
         return if self.online?
         @logger.info "Spawning Telegram client.."
         @online = nil
-        Thread.kill(@telegram_thr) if defined? @telegram_thr # kill old thread if it exists
-        @telegram_thr = Thread.new{ TelegramClient.new(self, @tg_login) } # init tg instance in new thread
+        @telegram = TelegramClient.new(self, @tg_login) # init tg instance in new thread
     end
     
+    # disconnect from tg#
+    def disconnect(logout = false)
+        return if not self.online? or not @telegram
+        @logger.info "Disconnecting Telegram client.."
+        @telegram.disconnect(logout)
+    end
+        
     ###########################################
 
     # send message to current user via XMPP  #
-    def send_message(from = nil, body = '')
+    def incoming_message(from = nil, body = '')
         @logger.info "Received new message from Telegram peer %s" % from || "[self]"
         reply = Jabber::Message.new
         reply.type = :chat
@@ -176,7 +192,7 @@ class XMPPSession < XMPPComponent
     end    
     
     # presence update #
-    def presence_update(from, type = nil, show = nil, status = nil, nickname = nil)
+    def presence(from, type = nil, show = nil, status = nil, nickname = nil)
         @logger.debug "Presence update request from %s.." %from.to_s
         req = Jabber::Presence.new()
         req.from = from.nil? ? @@transport.jid : from.to_s+'@'+@@transport.jid.to_s # presence <from> 
@@ -192,21 +208,46 @@ class XMPPSession < XMPPComponent
     ###########################################
         
     # queue message (we will share this queue within :message_queue to Telegram client thread) #
-    def queue_message(to, text = '')
-        @logger.debug "Queuing message to be sent to Telegram network user -> " % to
-        @message_queue << {to: to.split('@')[0], text: text}
+    def tg_outgoing(to, text = '')
+        @logger.debug "Sending message to be sent to Telegram network user -> " % to
+        @telegram.process_outgoing_msg(to.split('@')[0].to_i, text)
     end
 
     # enter auth data (we will share this data within :auth_data {} to Telegram client thread ) #
-    def enter_auth_data(typ, data) 
+    def tg_auth(typ, data) 
         @logger.info "Authenticating in Telegram network with :%s" % typ
-        @auth_data[typ.to_sym] = data
+        @telegram.process_auth(typ, data) 
     end 
+
+    # make vcard from telegram contact #
+    def make_vcard(to)
+        @logger.debug "Requesting information to make a VCard for Telegram contact..." # title, username, firstname, lastname, phone, bio, userpic 
+        fn, nickname, given, family, phone, desc, photo = @telegram.get_contact_info(to.split('@')[0].to_i)
+        vcard = Jabber::Vcard::IqVcard.new()
+        vcard["FN"] = fn
+        vcard["NICKNAME"] = nickname if nickname
+        vcard["URL"] = "https://t.me/%s" % nickname if nickname 
+        vcard["N/GIVEN"] = given if given
+        vcard["N/FAMILY"] = family if family
+        vcard["DESC"] = desc if desc
+        vcard["PHOTO/TYPE"] = 'image/jpeg' if photo
+        vcard["PHOTO/BINVAL"] = photo if photo
+        if phone then 
+            ph = vcard.add_element("TEL")
+            ph.add_element("HOME")
+            ph.add_element("VOICE")
+            ph.add_element("NUMBER")
+            ph.elements["NUMBER"].text = phone
+        end
+        @logger.debug vcard.to_s
+        return vcard
+    end
+    
     
     ###########################################
 
     # session status #
     def online?() @online end
-    def online!() @logger.info "Connection established"; @online = true; self.presence_update(nil, :subscribe); self.presence_update(nil, nil, nil, "Logged in as " + @tg_login.to_s) end
-    def offline!() @online = false; self.presence_update(nil, :unavailable, nil, "Logged out"); end
+    def online!() @logger.info "Connection established"; @online = true; self.presence(nil, :subscribe); self.presence(nil, nil, nil, "Logged in as " + @tg_login.to_s) end
+    def offline!() @online = false; self.presence(nil, :unavailable, nil, "Logged out"); @telegram = nil; end
 end
