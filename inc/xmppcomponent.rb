@@ -107,11 +107,13 @@ class XMPPComponent
         # vcard request #
         if iq.type == :get and iq.vcard and @sessions.key? iq.from.bare.to_s then
             @logger.debug "Got VCard request"
-            vcard = @sessions[iq.from.bare.to_s].make_vcard(iq.to.to_s)
+            vcard = @sessions[iq.from.bare.to_s].tg_contact_vcard(iq.to.to_s)
             reply = iq.answer
             reply.type = :result
             reply.elements["vCard"] = vcard
             @@transport.send(reply)
+            @sessions[iq.from.bare.to_s].tg_sync_roster(iq.to.to_s)            # re-sync status
+            
         # time response #
         elsif iq.type == :result and iq.elements["time"] and @sessions.key? iq.from.bare.to_s then
             @logger.debug "Got Timezone response"
@@ -203,7 +205,7 @@ class XMPPSession < XMPPComponent
     end    
     
     # presence update #
-    def presence(from, type = nil, show = nil, status = nil, nickname = nil)
+    def presence(from, type = nil, show = nil, status = nil, nickname = nil, photo = nil)
         @logger.debug "Presence update request from %s.." %from.to_s
         req = Jabber::Presence.new()
         req.from = from.nil? ? @@transport.jid : from.to_s+'@'+@@transport.jid.to_s # presence <from> 
@@ -212,6 +214,7 @@ class XMPPSession < XMPPComponent
         req.show = show unless show.nil? # presence <show>
         req.status = status unless status.nil? # presence message 
         req.add_element('nick', {'xmlns' => 'http://jabber.org/protocol/nick'} ).add_text(nickname) unless nickname.nil? # nickname 
+        req.add_element('x', {'xmlns' => 'vcard-temp:x:update'} ).add_element("photo").add_text(photo) unless photo.nil? # nickname 
         @logger.debug req
         @@transport.send(req)
     end
@@ -230,9 +233,16 @@ class XMPPSession < XMPPComponent
         @logger.info "Authenticating in Telegram network with :%s" % typ
         @telegram.process_auth(typ, data) 
     end 
+    
+    # sync roster #
+    def tg_sync_roster(to = nil)
+        @logger.debug "Sync Telegram contact status with roster.. %s" % to.to_s
+        to = (to) ? to.split('@')[0].to_i : nil
+        @telegram.sync_status(to)
+    end
 
     # make vcard from telegram contact #
-    def make_vcard(to)
+    def tg_contact_vcard(to)
         @logger.debug "Requesting information to make a VCard for Telegram contact..." # title, username, firstname, lastname, phone, bio, userpic 
         fn, nickname, given, family, phone, desc, photo = @telegram.get_contact_info(to.split('@')[0].to_i)
         vcard = Jabber::Vcard::IqVcard.new()
@@ -255,6 +265,7 @@ class XMPPSession < XMPPComponent
         return vcard
     end
     
+    ###########################################
     ## timezones ##
     def request_tz(jid)
         @logger.debug "Request timezone from JID %s" % jid.to_s
@@ -272,7 +283,7 @@ class XMPPSession < XMPPComponent
         @logger.debug "Set TZ to %s" % timezone
         @timezone = timezone
         @logger.debug "Resyncing contact list.."
-        @telegram.sync_status()
+        self.tg_sync_roster()
     end
     
     ###########################################
