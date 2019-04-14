@@ -88,8 +88,8 @@ class XMPPComponent
     # new message to XMPP component #
     def message_handler(msg)
         @logger.info 'New message from [%s] to [%s]' % [msg.from, msg.to]
-        return self.process_internal_command(msg.from.bare.to_s, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
-        return @sessions[msg.from.bare.to_s].tg_outgoing(msg.to.to_s, msg.first_element_text('body')) #if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
+        return self.process_internal_command(msg.from, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
+        return @sessions[msg.from.bare.to_s].tg_outgoing(msg.from, msg.to.to_s, msg.first_element_text('body')) #if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
     end
     
     def presence_handler(presence) 
@@ -97,20 +97,27 @@ class XMPPComponent
         @logger.debug(presence)
         if presence.type == :subscribe then reply = presence.answer(false); reply.type = :subscribed; @@transport.send(reply); end  # send "subscribed" reply to "subscribe" presence
         if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s and presence.type == :unavailable then @sessions[presence.from.bare.to_s].disconnect(); return; end # go offline when received offline presence from jabber user 
-        if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s then @sessions[presence.from.bare.to_s].connect(); return; end # connect if we have session 
+        if presence.to == @@transport.jid and @sessions.key? presence.from.bare.to_s then @sessions[presence.from.bare.to_s].request_tz(presence.from); @sessions[presence.from.bare.to_s].connect(); return; end # connect if we have session 
     end
 
     def iq_handler(iq)
         @logger.debug "New iq received"
         @logger.debug(iq.to_s)
         
-        if iq.vcard and @sessions.key? iq.from.bare.to_s then
+        # vcard request #
+        if iq.type == :get and iq.vcard and @sessions.key? iq.from.bare.to_s then
+            @logger.debug "Got VCard request"
             vcard = @sessions[iq.from.bare.to_s].make_vcard(iq.to.to_s)
             reply = iq.answer
             reply.type = :result
             reply.elements["vCard"] = vcard
-            @@transport.send(reply)            
-        else
+            @@transport.send(reply)
+        # time response #
+        elsif iq.type == :result and iq.elements["time"] and @sessions.key? iq.from.bare.to_s then
+            @logger.debug "Got Timezone response"
+            timezone = iq.elements["time"].elements["tzo"].text
+            @sessions[iq.from.bare.to_s].set_tz(timezone)
+        elsif iq.type == :get then
             reply = iq.answer
             reply.type = :error
         end
@@ -122,26 +129,27 @@ class XMPPComponent
     #############################
 
     # process internal /command #
-    def process_internal_command(jfrom, body)
+    def process_internal_command(from, body)
         case body.split[0] # /command argument = [command, argument]
         when '/login'  # creating new session if not exists and connect if user already has session
-            @sessions[jfrom] = XMPPSession.new(jfrom, body.split[1]) if not @sessions.key? jfrom
-            @sessions[jfrom].connect() 
-            self.update_db(jfrom)
+            @sessions[from.bare.to_s] = XMPPSession.new(from.bare.to_s, body.split[1]) if not @sessions.key? from.bare.to_s
+            @sessions[from.bare.to_s].request_tz(from) 
+            @sessions[from.bare.to_s].connect() 
+            self.update_db(from.bare.to_s)
         when '/code', '/password'  # pass auth data if we have session 
-            @sessions[jfrom].tg_auth(body.split[0], body.split[1])  if @sessions.key? jfrom 
+            @sessions[from.bare.to_s].tg_auth(body.split[0], body.split[1])  if @sessions.key? from.bare.to_s 
         when '/connect'  # going online 
-            @sessions[jfrom].connect() if @sessions.key? jfrom
+            @sessions[from.bare.to_s].connect() if @sessions.key? from.bare.to_s
         when '/disconnect'  # going offline without destroying a session 
-            @sessions[jfrom].disconnect() if @sessions.key? jfrom
+            @sessions[from.bare.to_s].disconnect() if @sessions.key? from.bare.to_s
         when '/logout'  # destroying session
-            @sessions[jfrom].disconnect(true) if @sessions.key? jfrom
-            self.update_db(jfrom, true)
-            @sessions.delete(jfrom)
+            @sessions[from.bare.to_s].disconnect(true) if @sessions.key? from.bare.to_s
+            self.update_db(from.bare.to_s, true)
+            @sessions.delete(from.bare.to_s)
         else # unknown command -- display help #
             msg = Jabber::Message.new
             msg.from = @@transport.jid
-            msg.to = jfrom
+            msg.to = from.bare.to_s
             msg.body = ::HELP_MESSAGE
             msg.type = :chat
             @@transport.send(msg) 
@@ -154,7 +162,7 @@ end
 ## XMPP Session Class #######
 #############################
 class XMPPSession < XMPPComponent
-    attr_reader :user_jid, :tg_login
+    attr_reader :user_jid, :tg_login, :timezone
     attr_accessor :online
     
     # start XMPP user session and Telegram client instance #
@@ -162,6 +170,7 @@ class XMPPSession < XMPPComponent
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[XMPPSession: %s/%s]' % [jid, tg_login] # init logger 
         @logger.info "Initializing new session.."
         @user_jid, @tg_login = jid, tg_login 
+        @timezone = '-00:00'
     end
     
     # connect to tg #
@@ -210,8 +219,9 @@ class XMPPSession < XMPPComponent
     ###########################################
         
     # queue message (we will share this queue within :message_queue to Telegram client thread) #
-    def tg_outgoing(to, text = '')
+    def tg_outgoing(from, to, text = '')
         @logger.debug "Sending message to be sent to Telegram network user -> " % to
+        self.request_tz(from) if not self.tz_set?
         @telegram.process_outgoing_msg(to.split('@')[0].to_i, text)
     end
 
@@ -245,6 +255,25 @@ class XMPPSession < XMPPComponent
         return vcard
     end
     
+    ## timezones ##
+    def request_tz(jid)
+        @logger.debug "Request timezone from JID %s" % jid.to_s
+        iq = Jabber::Iq.new
+        iq.type = :get
+        iq.to = jid
+        iq.from = @@transport.jid
+        iq.id = 'time_req_1'
+        iq.add_element("time", {"xmlns" => "urn:xmpp:time"})
+        @logger.debug iq.to_s
+        @@transport.send(iq)
+    end
+    
+    def set_tz(timezone)
+        @logger.debug "Set TZ to %s" % timezone
+        @timezone = timezone
+        @logger.debug "Resyncing contact list.."
+        @telegram.sync_status()
+    end
     
     ###########################################
 
@@ -252,4 +281,5 @@ class XMPPSession < XMPPComponent
     def online?() @online end
     def online!() @logger.info "Connection established"; @online = true; self.presence(nil, :subscribe); self.presence(nil, nil, nil, "Logged in as " + @tg_login.to_s) end
     def offline!() @online = false; self.presence(nil, :unavailable, nil, "Logged out"); @telegram = nil; end
+    def tz_set?() return @timezone != '-00:00' end
 end
