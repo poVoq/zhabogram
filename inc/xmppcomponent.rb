@@ -87,6 +87,7 @@ class XMPPComponent
 
     # new message to XMPP component #
     def message_handler(msg)
+        return if msg.type == :error
         @logger.info 'New message from [%s] to [%s]' % [msg.from, msg.to]
         return self.process_internal_command(msg.from, msg.first_element_text('body') ) if msg.to == @@transport.jid # treat message as internal command if received as transport jid
         return @sessions[msg.from.bare.to_s].tg_outgoing(msg.from, msg.to.to_s, msg.first_element_text('body')) #if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
@@ -112,8 +113,6 @@ class XMPPComponent
             reply.type = :result
             reply.elements["vCard"] = vcard
             @@transport.send(reply)
-            @sessions[iq.from.bare.to_s].tg_sync_roster(iq.to.to_s)            # re-sync status
-            
         # time response #
         elsif iq.type == :result and iq.elements["time"] and @sessions.key? iq.from.bare.to_s then
             @logger.debug "Got Timezone response"
@@ -235,7 +234,7 @@ class XMPPSession < XMPPComponent
     end 
     
     # sync roster #
-    def tg_sync_roster(to = nil)
+    def tg_sync_status(to = nil)
         @logger.debug "Sync Telegram contact status with roster.. %s" % to.to_s
         to = (to) ? to.split('@')[0].to_i : nil
         @telegram.sync_status(to)
@@ -282,8 +281,8 @@ class XMPPSession < XMPPComponent
     def set_tz(timezone)
         @logger.debug "Set TZ to %s" % timezone
         @timezone = timezone
-        @logger.debug "Resyncing contact list.."
-        self.tg_sync_roster()
+        # @logger.debug "Resyncing contact list.."
+        # self.tg_sync_status()
     end
     
     ###########################################

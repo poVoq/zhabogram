@@ -18,10 +18,10 @@ class TelegramClient
             config.client.application_version = params['version'] || '1.0' # hmm...
             config.client.use_test_dc = params['use_test_dc'] || false
             config.client.system_version = '42' # I think I have permission to hardcode The Ultimate Question of Life, the Universe, and Everything?..
-            config.client.use_file_database = false # wow
-            config.client.use_message_database = false # such library 
+            config.client.use_file_database = true # wow
+            config.client.use_message_database = true # such library 
             config.client.use_chat_info_database = false # much options
-            config.client.enable_storage_optimizer = false # ...
+            config.client.enable_storage_optimizer = true # ...
         end
         TD::Api.set_log_verbosity_level(params['verbosity'] || 1)
     end
@@ -33,7 +33,7 @@ class TelegramClient
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[TelegramClient: %s/%s]' % [xmpp.user_jid, login] # create logger
         @xmpp = xmpp # our XMPP user session. we will send messages back to Jabber through this instance. 
         @login = login # store tg login 
-        @cache = {chats: {}, users: {}, users_fi: {}, userpics: {}, unread_msg: {} } # we will store our cache here
+        @cache = {chats: {}, users: {}, users_fullinfo: {}, userpics: {}, unread_msg: {} } # we will store our cache here
         @files_dir = File.dirname(__FILE__) + '/../sessions/' + @xmpp.user_jid + '/files/'
 
         # spawn telegram client and specify callback handlers 
@@ -94,8 +94,7 @@ class TelegramClient
     def message_handler(update, show_date = false)
         @logger.debug 'Got NewMessage update'
         @logger.debug update.message.to_json
-
-        return if not @cache[:chats].key? update.message.chat_id # we do not know about this chat, ignore it
+        
         return if update.message.is_outgoing and update.message.sending_state.instance_of? TD::Types::MessageSendingState::Pending # ignore self outgoing messages
         
         # media? #
@@ -158,6 +157,7 @@ class TelegramClient
         # send and add message id to unreads
         @cache[:unread_msg][update.message.chat_id] = update.message.id
         @xmpp.incoming_message(update.message.chat_id.to_s, text)
+    
     end
     
     # new chat update -- when tg client discovers new chat #
@@ -348,7 +348,7 @@ class TelegramClient
     end
 
     # update users information and save it to cache #
-    def process_chat_info(chat_id, no_subscription = false)
+    def process_chat_info(chat_id, subscription = true)
         @logger.debug 'Updating chat id %s..' % chat_id.to_s
 
         # fullfil cache.. pasha durov, privet. #
@@ -356,9 +356,9 @@ class TelegramClient
             @cache[:chats][chat_id] = chat   # cache chat 
             @client.download_file(chat.photo.small.id).wait if chat.photo # download userpic
             @cache[:userpics][chat_id] = Digest::SHA1.hexdigest(IO.binread(self.format_content_link(chat.photo.small.remote.id, 'image.jpg', true))) if chat.photo and File.exist? self.format_content_link(chat.photo.small.remote.id, 'image.jpg', true) # cache userpic
-            @xmpp.presence(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s) if not no_subscription # send subscription request
+            @xmpp.presence(chat_id.to_s, :subscribe, nil, nil, @cache[:chats][chat_id].title.to_s) if subscription # send subscription request
             @xmpp.presence(chat_id.to_s, nil, :chat, @cache[:chats][chat_id].title.to_s, nil, @cache[:userpics][chat_id]) if chat.type.instance_of? TD::Types::ChatType::BasicGroup or chat.type.instance_of? TD::Types::ChatType::Supergroup  # send :chat status if its group/supergroup
-            self.process_user_info(chat.type.user_id) if chat.type.instance_of? TD::Types::ChatType::Private # process user if its a private chat 
+            # self.process_user_info(chat.type.user_id) if chat.type.instance_of? TD::Types::ChatType::Private # process user if its a private chat 
         }.wait
     end
     
@@ -370,7 +370,7 @@ class TelegramClient
             self.process_status_update(user_id, user.status) # status update
         }.wait
         @client.get_user_full_info(user_id).then{ |user_info|
-            @cache[:users_fi][user_id] = user_info # here is user "bio"
+            @cache[:users_fullinfo][user_id] = user_info # here is user "bio"
         }.wait
     end
 
@@ -412,7 +412,7 @@ class TelegramClient
             lastname = @cache[:users][chat_id].last_name # <N/FAMILY>
             username = @cache[:users][chat_id].username  # <NICKNAME>
             phone = @cache[:users][chat_id].phone_number  # <TEL>
-            bio = @cache[:users_fi][chat_id].bio if @cache[:users_fi].key? chat_id # <DESC>
+            bio = @cache[:users_fullinfo][chat_id].bio if @cache[:users_fullinfo].key? chat_id # <DESC>
         end
 
         # userpic #
@@ -457,7 +457,7 @@ class TelegramClient
 
     # format tg chat name #
     def format_chatname(chat_id)
-        if not @cache[:chats].key? chat_id then self.process_chat_info(chat_id, true) end
+        if not @cache[:chats].key? chat_id then self.process_chat_info(chat_id, false) end
         if not @cache[:chats].key? chat_id then return chat_id end
         name = '%s (%s)' % [@cache[:chats][chat_id].title, chat_id]
         return name 
