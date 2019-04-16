@@ -42,8 +42,14 @@ xmpp:
 
 ### Configuration ###
 
-Feel free to edit **config.yml**, options are commented and with clear names.
-It is good idea to obtain Telegram API ID from [my.telegram.org](https://my.telegram.org) to remove demo key requests limit.
+It is good idea to obtain Telegram API ID from [**https://my.telegram.org**](https://my.telegram.org) to remove demo key requests limit, and then edit in **config.yml**:
+
+```
+telegram:
+    api_id: '845316' # telegram API ID (my.telegram.org) #
+    api_hash: '27fe5224bc822bf3a45e015b4f9dfdb7' # telegram API HASH (my.telegram.org) #
+    ...
+```
 
 ### How to receive files from Telegram ###
 
