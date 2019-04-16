@@ -91,7 +91,7 @@ modules:
     dir_mode: "0744"
 ```
 
-Then you need to setup nginx proxy that will serve `get_url` path, because Telegram do not allowing URLs with non-default ports.  
+Then you need to setup nginx proxy that will serve `get_url` path, because Telegram will not handle URLs with non-default http(s) ports.  
 Example nginx config:  
 
 ```
