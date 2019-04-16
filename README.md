@@ -5,7 +5,8 @@
 * xmpp4r == 0.5.6
 * tdlib-ruby == 2.0 with pre-compiled _libtdjson.so_
 
-(there is pre-compiled _libtdjson.so_ for Debian Stretch x64 in repository)
+There is pre-compiled _libtdjson.so_ for Debian Stretch x64 in repository.  
+For any other distro you need to manually compile [**tdlib**](https://github.com/tdlib/td) and place _libtdjson.so_ to relative **lib/** directory (or **LD_LIBRARY_PATH**).
 
 ### Installation ###
 
@@ -27,7 +28,7 @@ listen:
 ```
 
 
-Next, move **config.yml.example** to and **config.yml** and edit **xmpp** section to match component listener:
+Next, rename **config.yml.example** to **config.yml** and edit **xmpp** section to match your component listener:
 
 
 ```
