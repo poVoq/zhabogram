@@ -154,7 +154,7 @@ class TelegramClient
 
         # text formatting
         text = "%s | %s | %s\n%s" % [update.message.id, self.format_username(update.message.sender_user_id), prefix, text] if update.message.chat_id < 0 # groupchats
-        text = "%s %s | %s%s" % [(update.message.is_outgoing ? '→' : '←'), update.message.id.to_s, prefix, text] if update.message.chat_id > 0 # private chats
+        text = "%s %s | %s%s" % [(update.message.is_outgoing ? '🠚' : '🠘'), update.message.id.to_s, prefix, text] if update.message.chat_id > 0 # private chats
 
         # send and add message id to unreads
         @cache[:unread_msg][update.message.chat_id] = update.message.id
