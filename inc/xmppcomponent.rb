@@ -61,6 +61,7 @@ class XMPPComponent
             @@transport.add_message_callback do |msg| msg.first_element_text('body') ? self.message_handler(msg) : nil  end 
             @@transport.add_presence_callback do |presence| self.presence_handler(presence)  end 
             @@transport.add_iq_callback do |iq| self.iq_handler(iq)  end 
+            @@transport.on_exception do |exception, stream, state| self.survive(exception, stream, state) end 
             @logger.info "Connection established"
             self.load_db()
             @logger.info 'Found %s sessions in database.' % @sessions.count
@@ -79,6 +80,12 @@ class XMPPComponent
             @db.close
             exit 1
         end
+    end
+    
+    def survive(exception, stream, state)
+        @logger.error "Stream error on :%s (%s)" % [state.to_s, exception.to_s]
+        @logger.info "Trying to revive session..."
+        self.connect()
     end
     
     #############################

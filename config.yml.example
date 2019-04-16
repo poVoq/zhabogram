@@ -4,7 +4,7 @@ telegram:
     api_hash: '344583e45741c457fe1862106095a5eb'
     verbosity: 2
     useragent: 'Zhabogram XMPP Gateway'
-    version: '0.4'
+    version: '0.7'
     use_test_dc: false
     loglevel: 0
     content_path: '/var/www/tg_media'

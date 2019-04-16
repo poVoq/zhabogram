@@ -95,6 +95,8 @@ class TelegramClient
         @logger.debug 'Got NewMessage update'
         @logger.debug update.message.to_json
         
+        @logger.info 'New message from Telegram chat %s' % update.message.chat_id
+        
         return if update.message.is_outgoing and update.message.sending_state.instance_of? TD::Types::MessageSendingState::Pending # ignore self outgoing messages
         
         # media? #
@@ -158,6 +160,7 @@ class TelegramClient
         @cache[:unread_msg][update.message.chat_id] = update.message.id
         @xmpp.incoming_message(update.message.chat_id.to_s, text)
     
+        GC.start
     end
     
     # new chat update -- when tg client discovers new chat #
@@ -180,7 +183,7 @@ class TelegramClient
         @logger.debug update.to_json
         
         # formatting
-        text = "| %s edit | %s" % [update.message_id.to_s, update.new_content.text.text.to_s]
+        text = "✎ %s | %s" % [update.message_id.to_s, update.new_content.text.text.to_s]
         @xmpp.incoming_message(update.chat_id.to_s, text)        
     end
 
@@ -189,7 +192,7 @@ class TelegramClient
         @logger.debug 'Got MessageDeleted update'
         @logger.debug update.to_json
         return if not update.is_permanent
-        text = "| %s del |" % update.message_ids.join(',')
+        text = "✗ %s |" % update.message_ids.join(',')
         @xmpp.incoming_message(update.chat_id.to_s, text)                
     end
 
@@ -220,7 +223,7 @@ class TelegramClient
     
     # processing authorization #
     def process_auth(typ, auth_data)
-        @logger.debug 'check_authorization with %s..' % typ
+        @logger.info "Authorizing with :%s.." % typ
         @client.check_authentication_code(auth_data) if typ == '/code'
         @client.check_authentication_password(auth_data) if typ == '/password'
     end
@@ -321,7 +324,7 @@ class TelegramClient
     
     # processing outgoing message from queue #
     def process_outgoing_msg(chat_id, text)
-        @logger.debug 'Sending message to user/chat <%s> within Telegram network..' % chat_id.to_s
+        @logger.info 'Sending message to Telegram chat %s...' % chat_id
 
         # processing /commands #
         return self.process_command(chat_id, text) if text[0] == '/'
@@ -329,7 +332,8 @@ class TelegramClient
         # handling replies #
         if text[0] == '>' then 
             splitted = text.split("\n")
-            reply_to = splitted[0].scan(/\d/).join('') || 0
+            reply_to = splitted[0].scan(/\d/).join('').to_i
+            reply_to = 0 if reply_to < 10000 # o_O
             text = splitted.drop(1).join("\n") if reply_to != 0 
         else
             reply_to = 0
