@@ -29,12 +29,13 @@ Next, move **config.yml.example** to and **config.yml** and edit **xmpp** sectio
 
 
 ```
-db_path: 'users.db'  
-jid: 'telegram.jabber.ru'  
-host: 'localhost'  
-port: 8888  
-secret: 'secret'  
-loglevel: 0   
+xmpp:
+	db_path: 'users.db'  
+	jid: 'telegram.jabber.ru'  
+	host: 'localhost'  
+	port: 8888  
+	secret: 'secret'  
+	loglevel: 0   
 ```
 
 If neccessary, edit **telegram** section too. 
