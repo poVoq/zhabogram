@@ -1,21 +1,22 @@
 telegram:
 
-    api_id: '17349'
-    api_hash: '344583e45741c457fe1862106095a5eb'
-    verbosity: 2
-    useragent: 'Zhabogram XMPP Gateway'
-    version: '0.7'
-    use_test_dc: false
-    loglevel: 0
-    content_path: '/var/www/tg_media'
-    content_link: 'https://localhost/tg_media'
-    content_upload_prefix: 'https://localhost/upload'
+    api_id: '17349' # telegram API ID (my.telegram.org) #
+    api_hash: '344583e45741c457fe1862106095a5eb' # telegram API HASH (my.telegram.org) #
+    verbosity: 2 # 1 = no verbosity, 2 = moderate verbosity, 3 = network requests debug
+    useragent: 'Zhabogram XMPP Gateway' # client name 
+    version: '0.8' # client version 
+    use_test_dc: false # always use false
+    loglevel: 0  # 0 = debug, 1 = info, 2 = warn, 3 = err, 4 = fatal, 5 = unknown (ruby logger class)
+    content_path: '/var/www/tg_media' # we will move (symlink) downloaded content here — you must setup web server that serve this directry
+    content_link: 'https://localhost/tg_media' # web server that serve `content_path` internet address  
+    content_upload_prefix: 'https://localhost/upload' # we will send files with URL starting with this string as document to Telegram (mod_http_upload get_url, see readme)
     
 xmpp:
 
-    db_path: 'users.db'
-    jid: 'tlgrm.localhost'
-    host: 'localhost'
-    port: 8899
-    secret: 'password'
-    loglevel: 0 
+    db_path: 'users.db' # sqlite3 users (JID:Telegram Login) database 
+    jid: 'tlgrm.localhost' # component JID 
+    host: 'localhost' # XMPP server 
+    port: 8899 # component port
+    secret: 'password' # component auth secret 
+    loglevel: 0  # 0 = debug, 1 = info, 2 = warn, 3 = err, 4 = fatal, 5 = unknown (ruby logger class)
+
