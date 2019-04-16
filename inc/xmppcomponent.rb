@@ -25,7 +25,7 @@ class XMPPComponent
     def initialize(params)
         @@loglevel = params['loglevel'] || Logger::DEBUG
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[XMPPComponent]'
-        @config = { host: params["host"] || 'localhost', port: params["port"] || 8899, jid: params["jid"] || 'tlgrm.rxtx.us', secret: params['secret'] || '' } # default config
+        @config = { host: params["host"] || 'localhost', port: params["port"] || 8899, jid: params["jid"] || 'tlgrm.rxtx.us', secret: params['password'] || '' } # default config
         @sessions = {}
         @db =  SQLite3::Database.new(params['db_path'] || 'users.db')
         @db.execute("CREATE TABLE IF NOT EXISTS users(jid varchar(256), tg_login varchar(256), PRIMARY KEY(jid) );")

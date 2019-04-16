@@ -22,7 +22,7 @@ listen:
     ip: "127.0.0.1"  
     service_check_from: false  
     hosts:  
-        "telegram.jabber.ru":  
+        "tlgrm.localhost":  
             password: "secret"
 ```
 
@@ -33,7 +33,7 @@ Next, move **config.yml.example** to and **config.yml** and edit **xmpp** sectio
 ```
 xmpp:
 	db_path: 'users.db'  
-	jid: 'telegram.jabber.ru'  
+	jid: 'tlgrm.localhost'  
 	host: 'localhost'  
 	port: 8888  
 	secret: 'secret'  
