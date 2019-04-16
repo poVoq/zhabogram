@@ -295,6 +295,18 @@ class TelegramClient
             @client.get_chat_history(chat_id, 0, 0, count).then {|msgs| 
                 msgs.messages.reverse.each do |msg| self.message_handler(TD::Types::Update::NewMessage.new(message: msg, disable_notification: false, contains_mention: false), true) end
             }.wait
+        when '/setusername'
+            @client.set_username(splitted[1]) if splitted[1]
+        when '/setname'
+            @client.set_name(splitted[1], splitted[2]) if splitted[1]
+        when '/setbio'
+            @client.set_bio(splitted[1]) if splitted[1]
+        when '/setpassword'
+            old_password = splitted[1]
+            new_password = splitted[2]
+            old_password = '' if old_password == 'nil'
+            new_password = nil if new_password == 'nil'
+            @client.set_password(old_password, new_password: new_password)
         else
             response = 'Unknown command. 
             
@@ -316,6 +328,10 @@ class TelegramClient
             /unblock — Remove current user from blacklist
             /leave — Leave current chat
             /delete — Delete current chat
+            /setusername username — Set username
+            /setname First Last — Set name
+            /setbio Bio — Set bio
+            /setpassword old new — Set 2FA password (use "nil" for no password") 
             ' 
         end
         
