@@ -238,6 +238,13 @@ class TelegramClient
         @client.search_public_chat(splitted[1][1..-1]).then {|chat| resolved = chat}.wait if splitted[1] and splitted[1][0] == '@'
 
         case splitted[0] 
+        when '/info' # information about user / chat
+            id = splitted[1].to_i
+            response = ''
+            self.process_user_info(id) if id and id > 0 and not @cache[:users].key? id
+            self.process_chat_info(id, false) if id and id < 0 and not @cache[:cache].key? id
+            response = self.format_chatname(id)  if @cache[:chats].key? id
+            response = self.format_username(id, true) if @cache[:users].key? id
         when '/add' # open new private chat by its id
             chat = (resolved) ? resolved.id : splitted[1].to_i
             self.process_chat_info(chat) if chat != 0
@@ -253,10 +260,11 @@ class TelegramClient
         when '/channel' # create new channel
             @client.create_new_supergroup_chat(splitted[1], splitted[2], is_channel: true) if splitted[2]
         when '/members' # view members of a group
-            response = ''
+            response = "- Members of chat %s -\n\n" % @cache[:chats][chat_id].title
             # supergroup 
             if @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::Supergroup then 
                 @client.get_supergroup_members(@cache[:chats][chat_id].type.supergroup_id, TD::Types::SupergroupMembersFilter::Recent.new(), 0, 200).then { |members| members.members.each do |member|
+                    self.process_user_info(member.user_id) if not @cache[:users].key? member.user_id # fetch userdata if noinfo
                     response += (@cache[:users].key? member.user_id) ? self.format_username(member.user_id, true) : "ID %s" % member.user_id
                     response += " | %s\n" % member.status.class.to_s
                 end }.wait
@@ -325,22 +333,27 @@ class TelegramClient
             /s/mitsake/mistake/ — Edit last message
             /d — Delete last message
             
+            /info id — Information about user/chat by its id
             /add @username or id — Create conversation with specified user or chat id
+            /join chat_link or id — Join chat by its link or id
+
             /secret @username — Create "secret chat" with specified user
             /group @username groupname — Create group chat named groupname with @username
             /supergroup name description — Create supergroup chat
             /channel name description — Create channel
+
             /members — Supergroup members
             /history count — Retrieve chat history
             /search count query — Search in chat history
-            /join chat_link or id — Join chat by its link or id
+
             /invite @username — Invite @username to current chat 
             /kick @username — Remove @username from current chat 
             /ban @username [hours] — Ban @username in current chat for [hours] hrs or forever if [hours] not specified
             /block — Blacklistscurrent user
             /unblock — Remove current user from blacklist
-            /leave — Leave current chat
             /delete — Delete current chat
+            /leave — Leave current chat
+
             /setusername username — Set username
             /setname First Last — Set name
             /setbio Bio — Set bio
@@ -356,6 +369,7 @@ class TelegramClient
         @logger.info 'Sending message to Telegram chat %s...' % chat_id
 
         # processing /commands #
+        return if not @cache[:chats].key? chat_id # null chat
         return self.process_command(chat_id, text) if text[0] == '/'
         
         # handling replies #
