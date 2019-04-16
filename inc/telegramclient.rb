@@ -252,6 +252,18 @@ class TelegramClient
             @client.create_new_supergroup_chat(splitted[1], splitted[2]) if splitted[2]
         when '/channel' # create new channel
             @client.create_new_supergroup_chat(splitted[1], splitted[2], is_channel: true) if splitted[2]
+        when '/members' # view members of a group
+            response = ''
+            # supergroup 
+            if @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::Supergroup then 
+                @client.get_supergroup_members(@cache[:chats][chat_id].type.supergroup_id, TD::Types::SupergroupMembersFilter::Recent.new(), 0, 200).then { |members| members.members.each do |member|
+                    response += (@cache[:users].key? member.user_id) ? self.format_username(member.user_id, true) : "ID %s" % member.user_id
+                    response += " | %s\n" % member.status.class.to_s
+                end }.wait
+            # normal group 
+            elsif @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::BasicGroup then
+                @cache[:chats][chat_id].last_message.content.member_user_ids.each do |member| response += (@cache[:users].key? member) ? self.format_username(member, true) : "ID %s" % member; response += "\n" end
+            end
         when '/invite' # invite user to chat
             @client.add_chat_member(chat_id, resolved.id).wait if resolved
         when '/kick' #  removes user from chat
@@ -266,7 +278,7 @@ class TelegramClient
         when '/leave', '/delete' #  delete / leave chat
             @client.close_chat(chat_id).wait
             @client.leave_chat(chat_id).wait
-            @client.close_secret_chat(chat_id).wait
+            @client.close_secret_chat(chat_id).wait if @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::Secret
             @client.delete_chat_history(chat_id, true).wait
             @xmpp.presence(chat_id, :unsubscribed) 
             @xmpp.presence(chat_id, :unavailable)
@@ -318,6 +330,7 @@ class TelegramClient
             /group @username groupname — Create group chat named groupname with @username
             /supergroup name description — Create supergroup chat
             /channel name description — Create channel
+            /members — Supergroup members
             /history count — Retrieve chat history
             /search count query — Search in chat history
             /join chat_link or id — Join chat by its link or id
@@ -465,13 +478,14 @@ class TelegramClient
     ###########################################
 
     # format tg user name #
-    def format_username(user_id)
+    def format_username(user_id, show_id = false)
         return if user_id == 0 # @me
         if not @cache[:users].key? user_id then self.process_user_info(user_id) end # update cache 
         if not @cache[:users].key? user_id then return user_id end # return id if not found anything about this user 
         id = (@cache[:users][user_id].username == '') ? user_id : @cache[:users][user_id].username # username or user id
         name = @cache[:users][user_id].first_name # firstname
         name = name + ' ' + @cache[:users][user_id].last_name if @cache[:users][user_id].last_name != '' # lastname
+        id = "%s ID %s" % [id, user_id] if show_id
         return "%s (@%s)" % [name, id]
     end
 
