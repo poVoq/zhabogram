@@ -12,7 +12,8 @@
 First of all, you need to create component listener on your Jabber server. 
 For example, for ejabberd:
 
-```port: 8888  
+```
+port: 8888  
 module: ejabberd_service  
 access: all  
 shaper_rule: fast  
@@ -25,6 +26,7 @@ hosts:
 
 
 Next, move **config.yml.example** to and **config.yml** and edit **xmpp** section to match component listener:
+
 
 ```
 db_path: 'users.db'  
