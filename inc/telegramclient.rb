@@ -27,9 +27,9 @@ class TelegramClient
     
     # instance initialization #
     def initialize(xmpp, jid, login)
-        return if not @@loglevel # call .configure() first
-    
+        return if not @@loglevel # call .configure() first    
         @logger = Logger.new(STDOUT); @logger.level = @@loglevel; @logger.progname = '[TelegramClient: %s/%s]' % [jid, login] # create logger
+        @logger.info 'Starting Telegram client..'
         @xmpp = xmpp # XMPP stream 
         @jid = jid # user JID 
         @timezone = '-00:00' # default timezone is UTC
@@ -39,9 +39,12 @@ class TelegramClient
         @auth_state = 'nil' # too.
         @cache = {chats: {}, users: {}, users_fullinfo: {}, userpics: {}, unread_msg: {} } # cache storage 
         @files_dir = File.dirname(__FILE__) + '/../sessions/' + @jid + '/files/'
-
-        # spawn telegram client and specify callback handlers 
-        @logger.info 'Starting Telegram client..'
+    end
+    
+    # initialize and connect telegram client #
+    def connect()
+        return if @client and @client.ready? 
+        @logger.info 'Connecting to Telegram network..' 
         @client = TD::Client.new(database_directory: 'sessions/' + @jid, files_directory: 'sessions/' + @jid + '/files/') # create telegram client instance
         @client.on(TD::Types::Update::AuthorizationState) do |update| self.auth_handler(update) end # register auth update handler 
         @client.on(TD::Types::Update::NewMessage) do |update| self.message_handler(update) end # register new message update handler 
@@ -51,15 +54,12 @@ class TelegramClient
         @client.on(TD::Types::Update::NewChat) do |update| self.new_chat_handler(update) end # register new chat handler 
         @client.on(TD::Types::Update::User) do |update| self.user_handler(update) end # new user update? 
         @client.on(TD::Types::Update::UserStatus) do |update| self.status_update_handler(update) end # register status handler 
-    end
-    
-    # connect/disconnect #
-    def connect()
-        @logger.info 'Connecting to Telegram network..' if not @client.ready?
-        @client.connect() if not @client.ready?
+        @client.connect() 
     end
 
+    # disconnect and destroy telegram client #
     def disconnect(logout = false)
+        return if not @client 
         @logger.info 'Disconnecting..'
         @cache[:chats].each_key do |chat_id| @xmpp.presence(@jid, chat_id.to_s, :unavailable) end # send offline presences
         (logout) ? @client.log_out : @client.dispose # logout if needed  

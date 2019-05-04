@@ -197,7 +197,7 @@ class XMPPComponent
     def process_command(from, body)
         case body.split[0] # /command argument = [command, argument]
         when '/login'  # create new session 
-            @sessions[from.bare.to_s] = TelegramClient.new(self, from.bare.to_s, body.split[1]) if not @sessions.key? from.bare.to_s
+            @sessions[from.bare.to_s] = TelegramClient.new(self, from.bare.to_s, body.split[1]) if not (@sessions.key? from.bare.to_s and @sessions[from.bare.to_s].online?)
             @sessions[from.bare.to_s].connect()
             self.request_tz(from)
             self.update_db(from.bare.to_s)
