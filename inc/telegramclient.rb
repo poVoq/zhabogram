@@ -528,7 +528,7 @@ class TelegramClient
         return path
     end
     
-    ###########################################
+    # state functions #
     def online?() @online end    
     def tz_set?() return @timezone != '-00:00' end
 end

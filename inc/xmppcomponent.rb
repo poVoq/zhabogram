@@ -204,7 +204,7 @@ class XMPPComponent
         when '/code', '/password'  # pass auth data to telegram
             @sessions[from.bare.to_s].process_auth(body.split[0], body.split[1])  if @sessions.key? from.bare.to_s 
         when '/connect'  # go online
-            @sessions[from.bare.to_s].client.connect() if @sessions.key? from.bare.to_s 
+            @sessions[from.bare.to_s].connect() if @sessions.key? from.bare.to_s 
         when '/disconnect'  # go offline (without destroying a session) 
             @sessions[from.bare.to_s].disconnect() if @sessions.key? from.bare.to_s
         when '/logout'  # go offline and destroy session
@@ -218,6 +218,7 @@ class XMPPComponent
             Memprof2.report(out: dump) if dump
             response = "Debug information: \n\n"
             response += "Running from: %s\n" % `ps -p #{$$} -o lstart`.lines.last.strip
+            response += "Sessions: %d online | %d total \n" % [ @sessions.inject(0){ |cnt, (jid, sess)| cnt = (sess.online?) ? cnt + 1 : cnt }, @sessions.count]
             response += "System memory used: %d KB\n"  % `ps -o rss -p #{$$}`.lines.last.strip.to_i
             response += "Objects memory allocated: %d bytes \n" % `cut -d' ' -f1 #{dump}`.lines.map(&:to_i).reduce(0, :+) if dump
             response += "\nDetailed memory info saved to %s\n" % dump if dump
