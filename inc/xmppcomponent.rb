@@ -75,11 +75,23 @@ class XMPPComponent
                 @@transport.send(p)
             end
             Thread.stop()
+        rescue Interrupt
+            @logger.error 'Interrupted!'
+            @@transport.on_exception do |exception,| end
+            self.disconnect()
+            return -11
         rescue Exception => e
             @logger.error 'Connection failed: %s' % e
             @db.close
             exit 1
         end
+    end
+    
+    # transport shutdown #
+    def disconnect()
+        @logger.info "Closing all connections..."
+        @sessions.each do |jid, session| @sessions[jid].disconnect() end
+        @@transport.close()
     end
     
     def survive(exception, stream, state)
