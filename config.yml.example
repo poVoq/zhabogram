@@ -4,7 +4,7 @@ telegram:
     api_hash: '27fe5224bc822bf3a45e015b4f9dfdb7' # telegram API HASH (my.telegram.org) #
     verbosity: 2 # 1 = no verbosity, 2 = moderate verbosity, 3 = network requests debug
     useragent: 'Zhabogram XMPP Gateway' # client name 
-    version: '0.8' # client version 
+    version: '1.0' # client version 
     use_test_dc: false # always use false
     loglevel: 0  # 0 = debug, 1 = info, 2 = warn, 3 = err, 4 = fatal, 5 = unknown (ruby logger class)
     content_path: '/var/zhabogram/content' # we will move (symlink) downloaded content here — you must setup web server that serve this directry
@@ -13,6 +13,9 @@ telegram:
     
 xmpp:
 
+    debug: false
+    admins:
+        - 'root@localhost'
     db_path: 'users.db' # sqlite3 users (JID:Telegram Login) database 
     jid: 'tlgrm.localhost' # component JID 
     host: 'localhost' # XMPP server 
