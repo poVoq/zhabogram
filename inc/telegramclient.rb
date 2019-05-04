@@ -159,8 +159,6 @@ class TelegramClient
         # send and add message id to unreads
         @cache[:unread_msg][update.message.chat_id] = update.message.id
         @xmpp.incoming_message(update.message.chat_id.to_s, text)
-    
-        GC.start
     end
     
     # new chat update -- when tg client discovers new chat #
