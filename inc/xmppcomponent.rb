@@ -139,15 +139,16 @@ class XMPPComponent
     # new message to XMPP component #
     def message_handler(msg)
         return if msg.type == :error
-        @logger.info 'Received message from <%s> to <%s>' % [msg.from, msg.to]
+        @logger.info 'Received message from <%s> to <%s>' % [msg.from.to_s, msg.to.to_s]
+        @logger.debug msg.to_s
         if msg.to == @@transport.jid then self.process_command(msg.from, msg.first_element_text('body') ); return; end # treat message as internal command if received as transport jid
         if @sessions.key? msg.from.bare.to_s then self.request_tz(msg.from) if not @sessions[msg.from.bare.to_s].tz_set?; @sessions[msg.from.bare.to_s].process_outgoing_msg(msg.to.to_s.split('@')[0].to_i, msg.first_element_text('body')); return; end #if @sessions.key? msg.from.bare.to_s and @sessions[msg.from.bare.to_s].online? # queue message for processing session is active for jid from
     end
 
     # new presence to XMPP component #
     def presence_handler(prsnc) 
-        @logger.info "New presence received"
-        @logger.debug(prsnc)
+        @logger.debug "Received presence :%s from <%s> to <%s>" % [prsnc.type.to_s, prsnc.from.to_s, prsnc.to.to_s]
+        @logger.debug(prsnc.to_s)
         if prsnc.type == :subscribe then reply = prsnc.answer(false); reply.type = :subscribed; @@transport.send(reply); end  # send "subscribed" reply to "subscribe" presence
         if prsnc.to == @@transport.jid and @sessions.key? prsnc.from.bare.to_s and prsnc.type == :unavailable then @sessions[prsnc.from.bare.to_s].disconnect(); return; end # go offline when received offline presence from jabber user 
         if prsnc.to == @@transport.jid and @sessions.key? prsnc.from.bare.to_s then self.request_tz(prsnc.from); @sessions[prsnc.from.bare.to_s].connect(); return; end # connect if we have session 
@@ -155,12 +156,12 @@ class XMPPComponent
     
     # new iq (vcard/tz) request to XMPP component #
     def iq_handler(iq)
-        @logger.info "New iq received"
+        @logger.debug "Received iq :%s from <%s> to <%s>" % [iq.type.to_s, iq.from.to_s, iq.to.to_s]
         @logger.debug(iq.to_s)
         
         # vcard request #
         if iq.type == :get and iq.vcard and @sessions.key? iq.from.bare.to_s then
-            @logger.info "Got VCard request"
+            @logger.debug "VCard request for <%s>" % iq.to.to_s
             fn, nickname, given, family, phone, desc, photo = @sessions[iq.from.bare.to_s].get_contact_info(iq.to.to_s.split('@')[0].to_i)
             vcard = Jabber::Vcard::IqVcard.new()
             vcard["FN"] = fn
@@ -179,10 +180,11 @@ class XMPPComponent
             @@transport.send(reply)
         # time response #
         elsif iq.type == :result and iq.elements["time"] and @sessions.key? iq.from.bare.to_s then
-            @logger.info "Got Timezone response"
+            @logger.debug "Timezone response from <%s>" % iq.from.to_s
             timezone = iq.elements["time"].elements["tzo"].text
             @sessions[iq.from.bare.to_s].timezone = timezone
         elsif iq.type == :get then
+            @logger.debug "Unknown iq type <%s>" % iq.from.to_s
             reply = iq.answer
             reply.type = :error
         end
