@@ -139,7 +139,7 @@ class XMPPComponent
         req.add_element('nick', {'xmlns' => 'http://jabber.org/protocol/nick'} ).add_text(nickname) unless nickname.nil? # nickname 
         req.add_element('x', {'xmlns' => 'vcard-temp:x:update'} ).add_element("photo").add_text(photo) unless photo.nil? # nickname 
         @logger.debug req.to_s
-        (immediately) ? @component.send(req) : @presence_que.store(to, req)
+        (immediately) ? @component.send(req) : @presence_que.store(from+to, req)
     end
 
     # request timezone information #
