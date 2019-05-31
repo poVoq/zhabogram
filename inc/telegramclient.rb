@@ -45,14 +45,14 @@ class TelegramClient
         return if @client and @client.ready? 
         @logger.info 'Connecting to Telegram network..' 
         @client = TD::Client.new(database_directory: 'sessions/' + @jid, files_directory: 'sessions/' + @jid + '/files/') # create telegram client instance
-        @client.on(TD::Types::Update::AuthorizationState) do |update|  self.auth_handler(update) end # register auth update handler 
-        @client.on(TD::Types::Update::File) do |update| self.file_handler(update) end # register file handler 
-        @client.on(TD::Types::Update::NewMessage) do |update|  self.message_handler(update) end # register new message update handler 
-        @client.on(TD::Types::Update::MessageContent) do |update|  self.message_edited_handler(update) end # register msg edited handler
-        @client.on(TD::Types::Update::DeleteMessages) do |update|  self.message_deleted_handler(update) end # register msg del handler
-        @client.on(TD::Types::Update::NewChat) do |update|  self.new_chat_handler(update) end # register new chat handler 
-        @client.on(TD::Types::Update::User) do |update|  self.user_handler(update) end # new user update? 
-        @client.on(TD::Types::Update::UserStatus) do |update|  self.status_update_handler(update) end # register status handler 
+        @client.on(TD::Types::Update::AuthorizationState) do |update| self.auth_handler(update) end # register auth update handler 
+        @client.on(TD::Types::Update::File) do |update| self.file_handler(update);  end # register file handler 
+        @client.on(TD::Types::Update::NewMessage) do |update| self.message_handler(update);  end # register new message update handler 
+        @client.on(TD::Types::Update::MessageContent) do |update| self.message_edited_handler(update) end # register msg edited handler
+        @client.on(TD::Types::Update::DeleteMessages) do |update| self.message_deleted_handler(update) end # register msg del handler
+        @client.on(TD::Types::Update::NewChat) do |update| self.new_chat_handler(update) end # register new chat handler 
+        @client.on(TD::Types::Update::User) do |update| self.user_handler(update) end # new user update? 
+        @client.on(TD::Types::Update::UserStatus) do |update| self.status_update_handler(update) end # register status handler 
         @client.connect() 
     end
 
@@ -124,7 +124,8 @@ class TelegramClient
         # file handling 
         file = case content
             when TD::Types::MessageContent::Sticker then [content.sticker.sticker, content.sticker.emoji + '.webp']
-            when TD::Types::MessageContent::VoiceNote then [content.voice_note.voice, 'voice message %i s.' % content.voice_note.duration + '.oga']
+            when TD::Types::MessageContent::VoiceNote then [content.voice_note.voice, 'voice message (%i seconds).oga' % content.voice_note.duration]
+            when TD::Types::MessageContent::VideoNote then [content.video_note.video, 'video message (%i seconds).mp4' % content.video_note.duration]
             when TD::Types::MessageContent::Animation then [content.animation.animation, content.animation.file_name + '.mp4' ]
             when TD::Types::MessageContent::Photo then [content.photo.sizes[-1].photo, content.photo.id + '.jpg']
             when TD::Types::MessageContent::Audio then [content.audio.audio, content.audio.file_name] 
@@ -136,13 +137,15 @@ class TelegramClient
         text = case content
             when TD::Types::MessageContent::BasicGroupChatCreate, TD::Types::MessageContent::SupergroupChatCreate then "has created chat"
             when TD::Types::MessageContent::ChatJoinByLink then "joined chat via invite link"
-            when TD::Types::MessageContent::ChatAddMembers then "invited %s" % self.format_username(message.content.member_user_ids.first)
-            when TD::Types::MessageContent::ChatDeleteMember then "kicked %s" % self.format_username(update.message.content.user_id)
+            when TD::Types::MessageContent::ChatAddMembers then "invited %s" % self.format_contact(message.content.member_user_ids.first)
+            when TD::Types::MessageContent::ChatDeleteMember then "kicked %s" % self.format_contact(update.message.content.user_id)
             when TD::Types::MessageContent::PinMessage then "pinned message: %s" % self.format_message(update.message.chat_id, content.message_id)
             when TD::Types::MessageContent::ChatChangeTitle then "chat title set to: %s" % update.message.content.title.to_s
             when TD::Types::MessageContent::Location then "coordinates: %s | https://www.google.com/maps/search/%s,%s/" %  [content.location.latitude, content.location.longitude]
             when TD::Types::MessageContent::Photo, TD::Types::MessageContent::Audio, TD::Types::MessageContent::Video, TD::Types::MessageContent::Document then content.caption.text
             when TD::Types::MessageContent::Text then content.text.text
+            when TD::Types::MessageContent::VoiceNote then content.caption.text
+            when TD::Types::MessageContent::VideoNote then ''
             else "unknown message type %s" % update.message.content.class
         end
         
@@ -152,17 +155,18 @@ class TelegramClient
         # forwards, replies and message id..
         prefix << DateTime.strptime((update.message.date+Time.now.getlocal(@timezone).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S") if show_date # show date if its 
         prefix << (update.message.is_outgoing ? '➡ ' : '⬅ ') + update.message.id.to_s  # message direction
-        prefix << "fwd: %s" % self.format_username(update.message.forward_info.sender_user_id) if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd  from user 
-        prefix << "fwd: %s" % self.format_chatname(update.message.forward_info.chat_id) if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedPost  # fwd from chat 
+        prefix << "%s" % self.format_contact(update.message.sender_user_id) if update.message.chat_id < 0 # show sender in group chats 
+        prefix << "fwd: %s" % self.format_contact(update.message.forward_info.sender_user_id) if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd  from user 
+        prefix << "fwd: %s%s" % [self.format_contact(update.message.forward_info.chat_id), (update.message.forward_info.author_signature != '') ? " (%s)"%update.message.forward_info.author_signature : ''] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedPost  # fwd from chat 
         prefix << "reply: %s" % self.format_message(update.message.chat_id, update.message.reply_to_message_id, false) if update.message.reply_to_message_id.to_i != 0 # reply to
         prefix << "file: %s" % self.format_file(file[0], file[1]) if file 
-        prefix << "user: %s" % self.format_username(update.message.sender_user_id) if update.message.chat_id < 0 # show sender in group chats 
-
-        text = (prefix << text).join(' | ') 
+        prefix = prefix.join(' | ')
+        prefix += (update.message.chat_id < 0 and text and text != "") ? "\n" : '' # \n if it is groupchat and message is not empty
+        prefix += (update.message.chat_id > 0 and text and text != "") ? " | " : ''
 
         # read message & send it to xmpp
         @client.view_messages(update.message.chat_id, [update.message.id], force_read: true)
-        @xmpp.message(@jid, update.message.chat_id.to_s, text)
+        @xmpp.message(@jid, update.message.chat_id.to_s, prefix + text)
     end
     
     # new chat update -- when tg client discovers new chat #
@@ -232,139 +236,94 @@ class TelegramClient
 
     # /command #
     def process_command(chat_id, text)
-        splitted = text.split # splitted[0] = command, splitted[1] = argument
-        splitted = ['/sed', text[3..-1]] if text[0..2] == '/s/' # sed-like edit 
-        resolved = nil; response = nil
-
-        # if second argument starts with @, try to resolve it
-        @client.search_public_chat(splitted[1][1..-1]).then {|chat| resolved = chat}.wait if splitted[1] and splitted[1][0] == '@'
-
-        case splitted[0] 
-        when '/info' # information about user / chat
-            response = ''
-            id = (resolved) ? resolved.id : splitted[1]
-            id ||= chat_id
-            id = id.to_i
-            self.process_user_info(id) if id and id > 0 and not @cache[:users].key? id
-            self.process_chat_info(id, false) if id and id < 0 and not @cache[:cache].key? id
-            response = self.format_chatname(id)  if @cache[:chats].key? id
-            response = self.format_username(id, true) if @cache[:users].key? id
-        when '/add' # open new private chat by its id
-            chat = (resolved) ? resolved.id : splitted[1].to_i
-            self.process_chat_info(chat) if chat != 0
-        when '/join' # join group/supergroup by invite link or by id 
-            chat = (resolved) ? resolved.id : splitted[1]
-            chat ||= chat_id
-            chat.to_s[0..3] == "http" ? @client.join_chat_by_invite_link(chat).wait : @client.join_chat(chat.to_i).wait
-        when '/secret' # create new secret chat 
-            uid = (resolved) ? resolved.id : chat_id 
-            @client.create_new_secret_chat(uid) if uid > 0 
-        when '/group' # create new group with @user_id
-            @client.create_new_basic_group_chat([resolved.id], splitted[2]) if resolved and splitted[2]
-        when '/supergroup' # create new supergroup
-            @client.create_new_supergroup_chat(splitted[1], splitted[2]) if splitted[2]
-        when '/channel' # create new channel
-            @client.create_new_supergroup_chat(splitted[1], splitted[2], is_channel: true) if splitted[2]
-        when '/members' # view members of a group
-            response = "- Members of chat %s -\n\n" % @cache[:chats][chat_id].title
-            # supergroup 
-            if @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::Supergroup then 
-                @client.get_supergroup_members(@cache[:chats][chat_id].type.supergroup_id, TD::Types::SupergroupMembersFilter::Recent.new(), 0, 200).then { |members| members.members.each do |member|
-                    self.process_user_info(member.user_id) if not @cache[:users].key? member.user_id # fetch userdata if noinfo
-                    response += (@cache[:users].key? member.user_id) ? self.format_username(member.user_id, true) : "ID %s" % member.user_id
-                    response += " | %s\n" % member.status.class.to_s
-                end }.wait
-            # normal group 
-            elsif @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::BasicGroup then
-                @cache[:chats][chat_id].last_message.content.member_user_ids.each do |member| response += (@cache[:users].key? member) ? self.format_username(member, true) : "ID %s" % member; response += "\n" end
-            end
-        when '/invite' # invite user to chat
-            @client.add_chat_member(chat_id, resolved.id).wait if resolved
-        when '/kick' #  removes user from chat
-            @client.set_chat_member_status(chat_id, resolved.id, TD::Types::ChatMemberStatus::Left.new()).wait if resolved
-        when '/ban' #  removes user from chat. argument = hours to ban.
-            until_date = (splitted[1]) ? Time.now.getutc.to_i + splitted[1].to_i * 3600 : 0
-            @client.set_chat_member_status(chat_id, resolved.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: until_date)).wait if resolved
-        when '/block' # add user to blacklist 
-            @client.block_user(chat_id) 
-        when '/unblock' # add user to blacklist 
-            @client.unblock_user(chat_id) 
-        when '/leave', '/delete' #  delete / leave chat
-            @client.close_chat(chat_id).wait
-            @client.leave_chat(chat_id).wait
-            @client.close_secret_chat(@cache[:chats][chat_id].type.secret_chat_id).wait if @cache[:chats][chat_id].type.instance_of? TD::Types::ChatType::Secret
-            @client.delete_chat_history(chat_id, true).wait
-            @xmpp.presence(@jid, chat_id, :unsubscribed) 
-            @xmpp.presence(@jid, chat_id, :unavailable)
-            @cache[:chats].delete(chat_id)
-        when '/sed' # sed-like edit
-            sed = splitted[1].split('/')
-            @client.search_chat_messages(chat_id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs| 
-                original = msgs.messages[0].content.text.text.to_s
-                edited = (sed[0] != '' ) ? original.gsub(Regexp.new(sed[0]), sed[1]) : sed[1]
-                @client.edit_message_text(chat_id, msgs.messages[0].id, TD::Types::InputMessageContent::Text.new(:text => { :text => edited, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )) if edited != original
-            }.wait
-        when '/d' # delete last message
-            id = splitted[1].to_i
-            @client.search_chat_messages(chat_id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs| id = msgs.messages[0].id }.wait if not id or id == 0
-            @client.delete_messages(chat_id, [id], true)
-        when '/dump'
-            response = @cache[:chats][chat_id].to_json
-        when '/search'
-            count = (splitted[1]) ? splitted[1].to_i : 10
-            query = (splitted[2]) ? splitted[2] : nil
-            @client.search_chat_messages(chat_id, 0, count, query: query, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs| 
-                msgs.messages.reverse.each do |msg| self.message_handler(TD::Types::Update::NewMessage.new(message: msg, disable_notification: false, contains_mention: false), true) end
-            }.wait
-        when '/history'
-            count = (splitted[1]) ? splitted[1].to_i : 10
-            @client.get_chat_history(chat_id, 0, 0, count).then {|msgs| 
-                msgs.messages.reverse.each do |msg| self.message_handler(TD::Types::Update::NewMessage.new(message: msg, disable_notification: false, contains_mention: false), true) end
-            }.wait
-        when '/setusername'
-            @client.set_username(splitted[1]) if splitted[1]
-        when '/setname'
-            @client.set_name(splitted[1], splitted[2]) if splitted[1]
-        when '/setbio'
-            @client.set_bio(splitted[1]) if splitted[1]
-        when '/setpassword'
-            old_password = splitted[1]
-            new_password = splitted[2]
-            old_password = '' if old_password == 'nil'
-            new_password = nil if new_password == 'nil'
-            @client.set_password(old_password, new_password: new_password)
-        else
-            response = 'Unknown command. 
+        arg = text[0..2] == '/s/' ? ['/sed', text[3..-1]] : text.split 
+    
+        # .. 
+        if arg[1] and arg[1][0] == '@' then @client.search_public_chat(arg[1][1..-1]).then {|c| resolve = c}.wait end # try to resolve @username from second arg #
+        if arg[1].to_i < 0 then resolve = self.process_chat_info(arg[1].to_i, false) end # try to resolve chat_id/user_id from second arg 
+        if arg[1].to_i > 0 then resolve = self.process_user_info(arg[1].to_i) end # try to resolve user_id from second arg 
+    
+        # command... 
+        response = nil
+        current = @cache[:chats][chat_id] # current chat 
+        resolve = resolve || nil  # resolved chat or nil
+        chat = resolve || current # resolved chat or current
+        case arg[0] 
+            when '/info'            then response = self.format_contact(chat.id) # print information
+            when '/add'             then (chat.id > 0) ? self.process_chat_info(chat.id, true) : @client.join_chat(chat.id).wait # add contact 
+            when '/join'            then @client.join_chat_by_invite_link(arg[1]).wait if arg[1][0..3] == 'http' # join chat by link 
+            when '/secret'          then @client.create_new_secret_chat(chat.id).wait if chat.id > 0 # new secret chat
+            when '/group'           then @client.create_new_basic_group_chat(resolve.id, arg[2]).it if resolve and arg[2]
+            when '/supergroup'      then @client.create_new_supergroup_chat(arg[1], arg[2]).wait if arg[2]
+            when '/channel'         then @client.create_new_supergroup_chat(arg[1], arg[2], is_channel: true).wait if arg[2]
+            when '/invite'          then @client.add_chat_member(current.id, resolve.id).wait if resolve
+            when '/kick'            then @client.set_chat_member_status(current, resolve.id, TD::Types::ChatMemberStatus::Left.new()).wait if resolve
+            when '/ban'             then @client.set_chat_member_status(current.id, resolve.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: (arg[1]) ? Time.now.getutc.to_i + arg[1].to_i * 3600 : 0)).wait if resolve
+            when '/block'           then @client.block_user(current.id).wait
+            when '/unblock'         then @client.unblock_user(current.id).wait
+            when '/members'         then members = []
+                                         response = "- Members of chat %s -\n\n" % current.title
+                                         @client.search_chat_members(current.id,filter:TD::Types::ChatMembersFilter::Members.new).then{ |m| members+=m.members }.wait if current.type.instance_of? TD::Types::ChatType::BasicGroup  # basic 
+                                         @client.get_supergroup_members(current.type.supergroup_id).then{|m| members+=m.members }.wait if current.type.instance_of? TD::Types::ChatType::Supergroup # super
+                                         members.each do |user| response += "%s | Role: %s \n" % [self.format_contact(user.user_id, true, false), user.status.class] end 
+            when '/leave','/delete' then @client.close_chat(current.id).wait
+                                         @client.leave_chat(current.id) if current.type.instance_of? TD::Types::ChatType::BasicGroup or current.type.instance_of? TD::Types::ChatType::Supergroup
+                                         @client.close_secret_chat(current.type.secret_chat_id).wait if current.type.instance_of? TD::Types::ChatType::Secret
+                                         @client.delete_chat_history(current.id, true).wait
+                                         @xmpp.presence(@jid, current.id.to_s, :unsubscribed) 
+                                         @xmpp.presence(@jid, current.id.to_s, :unavailable)
+                                         @cache[:chats].delete(current.id) if @cache[:chats].key? current.id
+                                         @cache[:users].delete(current.id) if @cache[:users].key? current.id
+            when '/sed'             then id, edited = nil, nil 
+                                         sed = arg[1].split('/') 
+                                         @client.search_chat_messages(current.id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then{|m| id,edited = m.messages[0].id,m.messages[0].content.text.text.to_s}.wait
+                                         @client.edit_message_text(current.id,id,TD::Types::InputMessageContent::Text.new(text: {text: edited.gsub(Regexp.new(sed[0]),sed[1]), entities: []},disable_web_page_preview: false, clear_draft: true)).wait if id
+            when '/d'               then id = arg[1].to_i
+                                         @client.search_chat_messages(current.id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|m| id = m.messages[0].id }.wait if id == 0
+                                         @client.delete_messages(current.id, [id], true)
+            when '/search'          then count = arg[1] || 10
+                                         query = arg[2] || nil
+                                         @client.search_chat_messages(current.id, 0, count, query: query, filter: TD::Types::SearchMessagesFilter::Empty.new).then {|msgs| 
+                                            msgs.messages.reverse.each do |msg| self.message_handler(TD::Types::Update::NewMessage.new(message: msg, disable_notification: false, contains_mention: false), true) end
+                                         }.wait
+            when '/setusername'     then @client.set_username(arg[1] || '') 
+            when '/setname'         then @client.set_name(arg[1] || '', arg[2] || '')
+            when '/setbio'          then @client.set_bio(arg[1..99].join(' '))
+            when '/setpassword'     then old_password, new_password = arg[1], arg[2]
+                                         old_password = '' if old_password == 'nil'
+                                         new_password = nil if new_password == 'nil'
+                                         @client.set_password(old_password, new_password: new_password)
+            when '/dump'            then response = current.to_json
+            else response = 'Unknown command. 
             
-            /s/mitsake/mistake/ — Edit last message
-            /d — Delete last message
-            
-            /info id — Information about user/chat by its id
-            /add @username or id — Create conversation with specified user or chat id
-            /join chat_link or id — Join chat by its link or id
+                /s/mitsake/mistake/ — Edit last message
+                /d — Delete last message
+                
+                /info id — Information about user/chat by its id
+                /add @username or id — Create conversation with specified user or chat id
+                /join chat_link or id — Join chat by its link or id
 
-            /secret @username — Create "secret chat" with specified user
-            /group @username groupname — Create group chat named groupname with @username
-            /supergroup name description — Create supergroup chat
-            /channel name description — Create channel
+                /secret @username — Create "secret chat" with specified user
+                /group @username groupname — Create group chat named groupname with @username
+                /supergroup name description — Create supergroup chat
+                /channel name description — Create channel
 
-            /members — Supergroup members
-            /history count — Retrieve chat history
-            /search count query — Search in chat history
+                /members — Supergroup members
+                /search count query — Search in chat history
 
-            /invite @username — Invite @username to current chat 
-            /kick @username — Remove @username from current chat 
-            /ban @username [hours] — Ban @username in current chat for [hours] hrs or forever if [hours] not specified
-            /block — Blacklistscurrent user
-            /unblock — Remove current user from blacklist
-            /delete — Delete current chat
-            /leave — Leave current chat
+                /invite @username — Invite @username to current chat 
+                /kick @username — Remove @username from current chat 
+                /ban @username [hours] — Ban @username in current chat for [hours] hrs or forever if [hours] not specified
+                /block — Blacklistscurrent user
+                /unblock — Remove current user from blacklist
+                /delete — Delete current chat
+                /leave — Leave current chat
 
-            /setusername username — Set username
-            /setname First Last — Set name
-            /setbio Bio — Set bio
-            /setpassword old new — Set 2FA password (use "nil" for no password") 
-            ' 
+                /setusername username — Set username
+                /setname First Last — Set name
+                /setbio Bio — Set bio
+                /setpassword old new — Set 2FA password (use "nil" for no password") 
+                ' 
         end
         
         @xmpp.message(@jid, chat_id.to_s, response) if response
@@ -379,21 +338,17 @@ class TelegramClient
         return self.process_command(chat_id, text) if text[0] == '/'
         
         # handling replies #
+        reply_to = 0
         if text[0] == '>' then 
-            splitted = text.split("\n")
-            reply_to = splitted[0].scan(/\d/).join('').to_i
-            reply_to = 0 if reply_to < 10000 # o_O
+            text = text.split("\n")
+            reply_to = text[0].scan(/\d/).to_i
+            reply_to = 0 if reply_to < 10000 
             text = splitted.drop(1).join("\n") if reply_to != 0 
-        else
-            reply_to = 0
         end
         
         # handling files received from xmpp #
-        if text.start_with? @@content_upload_prefix  then
-            message = TD::Types::InputMessageContent::Document.new(document: TD::Types::InputFile::Remote.new(id: text), caption: { :text => '', :entities => []})
-        else
-            message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )
-        end
+        message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )
+        message = TD::Types::InputMessageContent::Document.new(document: TD::Types::InputFile::Remote.new(id: text), caption: { :text => '', :entities => []}) if text.start_with? @@content_upload_prefix  
         
         # send message and mark chat as read #
         @client.send_message(chat_id, message, reply_to_message_id: reply_to)
@@ -408,6 +363,7 @@ class TelegramClient
             @xmpp.presence(@jid, chat_id.to_s, :subscribe, nil, nil, chat.title.to_s) if subscription # send subscription request
             self.process_status_update(chat_id, chat.title.to_s, true) if chat.id < 0 # groups presence 
         }.wait
+        return @cache[:chats][chat_id] if @cache[:chats].key? chat_id 
     end
     
     # update user info in cache and sync status to roster if needed #
@@ -418,6 +374,7 @@ class TelegramClient
             @client.get_user_full_info(user_id).then{ |bio| @cache[:chats][user_id].attributes[:client_data] = bio.bio }.wait
             self.process_status_update(user_id, user.status, true) # status update
         }.wait
+        return @cache[:users][user_id] if @cache[:users].key? user_id  
     end
 
     # convert telegram status to XMPP one
@@ -425,29 +382,18 @@ class TelegramClient
         @logger.debug "Processing status update for user id %s.." % user_id.to_s 
         xmpp_show, xmpp_status, xmpp_photo = nil 
         case status 
-        when TD::Types::UserStatus::Online 
-            xmpp_show = nil
-            xmpp_status = "Online"
-        when TD::Types::UserStatus::Offline 
-            xmpp_show = (Time.now.getutc.to_i - status.was_online.to_i < 3600) ? :away : :xa
-            xmpp_status = DateTime.strptime((status.was_online+Time.now.getlocal(@timezone).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
-        when TD::Types::UserStatus::Recently 
-            xmpp_show = :dnd
-            xmpp_status = "Last seen recently"
-        when TD::Types::UserStatus::LastWeek 
-            xmpp_show = :unavailable
-            xmpp_status = "Last seen last week"
-        when TD::Types::UserStatus::LastMonth 
-            xmpp_show = :unavailable
-            xmpp_status = "Last seen last month"
-        else
-            xmpp_show = :chat
-            xmpp_status = status
+            when TD::Types::UserStatus::Online then xmpp_show, xmpp_status = nil, "Online"
+            when TD::Types::UserStatus::Offline then xmpp_show, xmpp_status = (Time.now.getutc.to_i - status.was_online.to_i < 3600) ? :away : :xa, DateTime.strptime((status.was_online+Time.now.getlocal(@timezone).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
+            when TD::Types::UserStatus::Recently then xmpp_show, xmpp_status = :dnd, "Last seen recently"
+            when TD::Types::UserStatus::LastWeek then xmpp_show, xmpp_status = :unavailable, "Last seen last week"
+            when TD::Types::UserStatus::LastMonth then xmpp_show, xmpp_status = :unavailable, "Last seen last month"
+            else xmpp_show, xmpp_status = :chat, status
         end
 
         xmpp_photo = self.format_file(@cache[:photos][user_id], 'image.jpg', true) if @cache[:photos].include? user_id
         xmpp_photo = (File.exist?  xmpp_photo.to_s) ? Base64.encode64(IO.binread(xmpp_photo)) : nil
-        @xmpp.presence(@jid, user_id.to_s, nil, xmpp_show, xmpp_status, nil, xmpp_photo, immed) 
+        # ...
+        return @xmpp.presence(@jid, user_id.to_s, nil, xmpp_show, xmpp_status, nil, xmpp_photo, immed) 
     end
     
     # get contact information (for vcard). 
@@ -474,47 +420,39 @@ class TelegramClient
     
     # resolve id by @username (or just return id)
     def resolve_username(username)
-        resolved = nil
-        if username[0] == '@' then  # @username
-            @client.search_public_chat(username[1..-1]).then {|chat| resolved = '@' + chat.id.to_s}.wait
-        elsif username[0..3] == 'http' or username[0..3] == 't.me' then # chat link 
-            @client.join_chat_by_invite_link(username)
-        elsif username.to_i != 0 then # user id
-            resolved = username
-        end
-        
-        return resolved || '' 
+        resolved = username 
+        if username[0] == '@' then @client.search_public_chat(username[1..-1]).then {|chat| resolved = '@' + chat.id.to_s}.wait end 
+        if  username[0..3] == 'http' or username[0..3] == 't.me' then @client.join_chat_by_invite_link(username) end 
+        return resolved 
     end
     
     ###########################################
     ## Format functions #######################
     ###########################################
     # format tg user name #
-    def format_username(user_id, show_id = false)
-        return if user_id == 0 # @me
-        if not @cache[:users].key? user_id then self.process_user_info(user_id) end # update cache 
-        if not @cache[:users].key? user_id then return user_id end # return id if not found anything about this user 
-        id = (@cache[:users][user_id].username == '') ? user_id : @cache[:users][user_id].username # username or user id
-        name = @cache[:users][user_id].first_name # firstname
-        name = name + ' ' + @cache[:users][user_id].last_name if @cache[:users][user_id].last_name != '' # lastname
-        id = "%s ID %s" % [id, user_id] if show_id
-        return "%s (@%s)" % [name, id]
+    def format_contact(id, show_id = false, resolve = true)
+        fmt = ''
+        if id < 0 then # its chat 
+            fmt = (@cache[:chats].key? id) ? "%s" % @cache[:chats][id].title : "%s" % id 
+        elsif id > 0 then # its user 
+            self.process_user_info(id) if not @cache[:users].key? id and resolve
+            user = @cache[:users][id] if @cache[:users].key? id 
+            fmt += user.first_name if user and user.first_name != ''
+            fmt += " " + user.last_name if user and user.last_name != ''
+            fmt += " (@%s)" % user.username if user and user.username != '' 
+            fmt += " (%s)" % id if (user and user.username == '') or show_id
+        else
+            fmt = "unknown (%s)" % id
+        end
+
+        return fmt
     end
 
-    # format tg chat name #
-    def format_chatname(chat_id)
-        if not @cache[:chats].key? chat_id then self.process_chat_info(chat_id, false) end
-        if not @cache[:chats].key? chat_id then return chat_id end
-        name = '%s (%s)' % [@cache[:chats][chat_id].title, chat_id]
-        return name 
-    end
-    
     # format reply# 
     def format_message(chat_id, message_id, full = true)
         text = ''
         @client.get_message(chat_id, message_id).then { |message| text = message.content.text.text }.wait 
-        text = (text.lines.count > 1 and not full) ? "%s.." % text.split("\n")[0] : text
-        return "msg %s [%s]" % [message_id.to_s, text]
+        return (not full) ? "%s >> %s.." % [message_id, text.split("\n")[0]] : "%s | %s " % [message_id, text]
     end
 
     def format_file(file, filename, local = false)

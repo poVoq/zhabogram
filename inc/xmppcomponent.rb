@@ -7,6 +7,7 @@
   /password secret — Enter 2FA password
   /connect ­— Connect to Telegram network if have active session
   /disconnect ­— Disconnect from Telegram network
+  /reconnect ­— Reconnect to Telegram network
   /logout — Disconnect from Telegram network and forget session
   
   /info — Show information and usage statistics of this instance (only for JIDs specified as administrators)
@@ -232,6 +233,10 @@ class XMPPComponent
             @sessions[from.bare.to_s].connect() if @sessions.key? from.bare.to_s 
         when '/disconnect'  # go offline (without destroying a session) 
             @sessions[from.bare.to_s].disconnect() if @sessions.key? from.bare.to_s
+        when '/reconnect'  # reconnect
+            @sessions[from.bare.to_s].disconnect() if @sessions.key? from.bare.to_s
+            sleep(0.1)
+            @sessions[from.bare.to_s].connect() if @sessions.key? from.bare.to_s 
         when '/logout'  # go offline and destroy session
             @sessions[from.bare.to_s].disconnect(true) if @sessions.key? from.bare.to_s
             self.update_db(from.bare.to_s, true)
@@ -242,7 +247,7 @@ class XMPPComponent
             response += "Running from: %s\n" % `ps -p #{$$} -o lstart`.lines.last.strip
             response += "System memory used: %d KB\n"  % `ps -o rss -p #{$$}`.lines.last.strip.to_i
             response += "\n\nSessions: %d online | %d total \n" % [ @sessions.inject(0){ |cnt, (jid, sess)| cnt = (sess.online?) ? cnt + 1 : cnt }, @sessions.count]
-            @sessions.each do |jid, session|  response += "JID: %s | Login: %s | Status: %s (%s) | %s\n" % [jid, session.login, (session.online == true) ? 'Online' : 'Offline', session.auth_state, (session.me) ? session.format_username(session.me.id) : 'Unknown' ] end
+            @sessions.each do |jid, session|  response += "JID: %s | Login: %s | Status: %s (%s) | %s\n" % [jid, session.login, (session.online == true) ? 'Online' : 'Offline', session.auth_state, (session.me) ? session.format_contact(session.me.id) : 'Unknown' ] end
             self.message(from.bare, nil, response)
         when '/restart' # reset transport
             return if not @config[:admins].include? from.bare.to_s 
