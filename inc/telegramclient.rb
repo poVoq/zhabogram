@@ -54,6 +54,7 @@ class TelegramClient
         @client.on(TD::Types::Update::User) do |update| self.user_handler(update) end # new user update? 
         @client.on(TD::Types::Update::UserStatus) do |update| self.status_update_handler(update) end # register status handler 
         @client.connect() 
+        return true
     end
 
     # disconnect and destroy telegram client #
@@ -339,13 +340,12 @@ class TelegramClient
         
         # handling replies #
         reply_to = 0
-        if text[0] == '>' then 
+        if text[0] == '>' and text.match(Regexp.new /^>( )?[0-9]{10,20}/) then 
             text = text.split("\n")
-            reply_to = text[0].scan(/\d/).to_i
-            reply_to = 0 if reply_to < 10000 
-            text = splitted.drop(1).join("\n") if reply_to != 0 
+            reply_to = text[0].scan(/\d+/).first.to_i
+            text = text.drop(1).join("\n")
         end
-        
+
         # handling files received from xmpp #
         message = TD::Types::InputMessageContent::Text.new(:text => { :text => text, :entities => []}, :disable_web_page_preview => false, :clear_draft => true )
         message = TD::Types::InputMessageContent::Document.new(document: TD::Types::InputFile::Remote.new(id: text), caption: { :text => '', :entities => []}) if text.start_with? @@content_upload_prefix  
@@ -377,6 +377,12 @@ class TelegramClient
         return @cache[:users][user_id] if @cache[:users].key? user_id  
     end
 
+    # sync statuses with XMPP roster 
+    def sync_status()   
+        @logger.debug "Syncing statuses with roster.."
+        @cache[:chats].each do |chat| self.process_status_update(chat.id, (@cache[:users].include? chat.id ? @cache[:users][chat.id].status : chat.title.to_s), true) end
+    end
+    
     # convert telegram status to XMPP one
     def process_status_update(user_id, status, immed = true)
         @logger.debug "Processing status update for user id %s.." % user_id.to_s 

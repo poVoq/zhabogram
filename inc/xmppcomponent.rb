@@ -32,28 +32,22 @@ class XMPPComponent
         @config = { host: params["host"] || 'localhost', port: params["port"] || 8899, jid: params["jid"] || 'tlgrm.localhost', secret: params['password'] || '', admins: params['admins'] || [], debug: params['debug'] } # default config
         @sessions = {}
         @presence_que = {}
-        @db =  SQLite3::Database.new(params['db_path'] || 'users.db')
-        @db.execute("CREATE TABLE IF NOT EXISTS users(jid varchar(256), login varchar(256), PRIMARY KEY(jid) );")
-        @db.results_as_hash = true
+        @db =  params['db_path'] || 'users.dat'
         self.load_db()
     end
     
     # load sessions from db #
-    def load_db(jid = nil) 
-        @logger.info "Initializing database.."
-        query = (jid.nil?) ? "SELECT * FROM users" : "SELECT * FROM users where jid = '%s';" % jid
-        @logger.debug(query)        
-        @db.execute(query) do |session| @sessions[session['jid']] = TelegramClient.new(self, session['jid'], session['login']) end
+    def load_db()
+        @logger.info "Loading sessions..."
+        File.open( @db, 'r' ) {|f| YAML.load(f).each do |jid,login| @sessions[jid] = TelegramClient.new(self, jid, login) end }
     end
 
     # store session to db #
-    def update_db(jid, delete = false, register = false)
-        login = (not register and @sessions.key? jid) ? @sessions[jid].login.to_s : register
-        return if not login 
-        @logger.info "Writing database [%s].." % jid.to_s
-        query = (delete) ? "DELETE FROM users where jid = '%s';" % jid.to_s : "INSERT OR REPLACE INTO users(jid, login) VALUES('%s', '%s');" % [jid.to_s, login]
-        @logger.debug query
-        @db.execute(query)
+    def save_db()
+        @logger.info "Saving sessions..."
+        sessions_store = []
+        @sessions.each do |jid,session| store << {jid: jid, login: session.login} end
+        File.open( @db, 'w' ) {|f| f.write(YAML.dump(sessions_store)) }
     end
 
     # connecting to XMPP server #
@@ -97,7 +91,7 @@ class XMPPComponent
             return -11
         rescue Exception => e
             @logger.error 'Connection failed: %s' % e
-            @db.close
+            self.save_db()
             exit -8
         end
     end
@@ -174,8 +168,8 @@ class XMPPComponent
         @logger.debug "Received presence :%s from <%s> to <%s>" % [prsnc.type.to_s, prsnc.from.to_s, prsnc.to.to_s]
         @logger.debug(prsnc.to_s)
         if prsnc.type == :subscribe then reply = prsnc.answer(false); reply.type = :subscribed; @component.send(reply); end  # send "subscribed" reply to "subscribe" presence
-        if prsnc.to == @component.jid and @sessions.key? prsnc.from.bare.to_s and prsnc.type == :unavailable then @sessions[prsnc.from.bare.to_s].disconnect(); return; end # go offline when received offline presence from jabber user 
-        if prsnc.to == @component.jid and @sessions.key? prsnc.from.bare.to_s then self.request_tz(prsnc.from); @sessions[prsnc.from.bare.to_s].connect(); return; end # connect if we have session 
+        if prsnc.to == @component.jid and @sessions.key? prsnc.from.bare.to_s and prsnc.type == :unavailable then @sessions[prsnc.from.bare.to_s].disconnect(); self.presence(prsnc.from, nil, :subscribe) ; return; end # go offline when received offline presence from jabber user 
+        if prsnc.to == @component.jid and @sessions.key? prsnc.from.bare.to_s then self.request_tz(prsnc.from); @sessions[prsnc.from.bare.to_s].connect() || @sessions[prsnc.from.bare.to_s].sync_status(); return; end # connect if we have session 
     end
     
     # new iq (vcard/tz) request to XMPP component #
@@ -226,7 +220,7 @@ class XMPPComponent
             @sessions[from.bare.to_s] = TelegramClient.new(self, from.bare.to_s, body.split[1]) if not (@sessions.key? from.bare.to_s and @sessions[from.bare.to_s].online?)
             @sessions[from.bare.to_s].connect()
             self.request_tz(from)
-            self.update_db(from.bare.to_s)
+            self.save_db()
         when '/code', '/password'  # pass auth data to telegram
             @sessions[from.bare.to_s].process_auth(body.split[0], body.split[1])  if @sessions.key? from.bare.to_s 
         when '/connect'  # go online
@@ -239,7 +233,7 @@ class XMPPComponent
             @sessions[from.bare.to_s].connect() if @sessions.key? from.bare.to_s 
         when '/logout'  # go offline and destroy session
             @sessions[from.bare.to_s].disconnect(true) if @sessions.key? from.bare.to_s
-            self.update_db(from.bare.to_s, true)
+            self.save_db()
             @sessions.delete(from.bare.to_s)
         when '/info' # show some debug information
             return if not @config[:admins].include? from.bare.to_s 
