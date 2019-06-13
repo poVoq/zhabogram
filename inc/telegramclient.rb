@@ -18,8 +18,8 @@ class TelegramClient
             config.client.use_test_dc = params['use_test_dc'] || false
             config.client.system_version = '42' # I think I have permission to hardcode The Ultimate Question of Life, the Universe, and Everything?..
             config.client.use_file_database = true # wow
-            config.client.use_message_database = false # such library 
-            config.client.use_chat_info_database = false # much options
+            config.client.use_message_database = true # such library 
+            config.client.use_chat_info_database = true # much options
             config.client.enable_storage_optimizer = false # ...
         end
         TD::Api.set_log_verbosity_level(params['verbosity'] || 1)
@@ -380,7 +380,7 @@ class TelegramClient
     # sync statuses with XMPP roster 
     def sync_status()   
         @logger.debug "Syncing statuses with roster.."
-        @cache[:chats].each do |chat| self.process_status_update(chat.id, (@cache[:users].include? chat.id ? @cache[:users][chat.id].status : chat.title.to_s), true) end
+        @cache[:chats].each_value do |chat| self.process_status_update(chat.id, (chat.id > 0 and @cache[:users].include? chat.id) ? @cache[:users][chat.id].status : chat.title.to_s, true) end 
     end
     
     # convert telegram status to XMPP one

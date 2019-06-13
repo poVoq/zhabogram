@@ -84,7 +84,7 @@ class XMPPComponent
             @sessions.each do |jid, session| self.presence(jid, nil, :subscribe) end
             Thread.new { while @component.is_connected? do @presence_que.each_value { |p| @component.send(p) }; @presence_que.clear; sleep(60); end }  # presence updater thread
             Thread.stop() 
-        rescue Interrupt
+        rescue Interrupt, SignalException
             @logger.error 'Interrupted!'
             @component.on_exception do |exception,| end
             self.disconnect()
