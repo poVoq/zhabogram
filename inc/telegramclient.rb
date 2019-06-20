@@ -165,9 +165,12 @@ class TelegramClient
         prefix += (update.message.chat_id < 0 and text and text != "") ? "\n" : '' # \n if it is groupchat and message is not empty
         prefix += (update.message.chat_id > 0 and text and text != "") ? " | " : ''
 
+        # OTR support
+        text = prefix + text unless text.start_with? '?OTR' 
+
         # read message & send it to xmpp
         @client.view_messages(update.message.chat_id, [update.message.id], force_read: true)
-        @xmpp.message(@jid, update.message.chat_id.to_s, prefix + text)
+        @xmpp.message(@jid, update.message.chat_id.to_s, text)
     end
     
     # new chat update -- when tg client discovers new chat #
