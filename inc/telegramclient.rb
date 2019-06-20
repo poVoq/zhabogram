@@ -397,7 +397,7 @@ class TelegramClient
         end
 
         xmpp_photo = self.format_file(@cache[:photos][user_id], 'image.jpg', true) if @cache[:photos].include? user_id
-        xmpp_photo = (File.exist?  xmpp_photo.to_s) ? Base64.encode64(IO.binread(xmpp_photo)) : nil
+        xmpp_photo = (File.exist?  xmpp_photo.to_s) ? Digest::SHA1.hexdigest(IO.binread(xmpp_photo)) : nil
         # ...
         return @xmpp.presence(@jid, user_id.to_s, nil, xmpp_show, xmpp_status, nil, xmpp_photo, immed) 
     end
