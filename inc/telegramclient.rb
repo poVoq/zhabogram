@@ -18,8 +18,8 @@ class TelegramClient
             config.client.use_test_dc = params['use_test_dc'] || false
             config.client.system_version = '42' # I think I have permission to hardcode The Ultimate Question of Life, the Universe, and Everything?..
             config.client.use_file_database = true # wow
-            config.client.use_message_database = true # such library 
-            config.client.use_chat_info_database = true # much options
+            config.client.use_message_database = false # such library 
+            config.client.use_chat_info_database = false # much options
             config.client.enable_storage_optimizer = false # ...
         end
         TD::Api.set_log_verbosity_level(params['verbosity'] || 1)
@@ -124,18 +124,19 @@ class TelegramClient
 
         # file handling 
         file = case content
-            when TD::Types::MessageContent::Sticker then [content.sticker.sticker, content.sticker.emoji + '.webp']
-            when TD::Types::MessageContent::VoiceNote then [content.voice_note.voice, 'voice message (%i seconds).oga' % content.voice_note.duration]
-            when TD::Types::MessageContent::VideoNote then [content.video_note.video, 'video message (%i seconds).mp4' % content.video_note.duration]
-            when TD::Types::MessageContent::Animation then [content.animation.animation, content.animation.file_name + '.mp4' ]
-            when TD::Types::MessageContent::Photo then [content.photo.sizes[-1].photo, content.photo.id + '.jpg']
-            when TD::Types::MessageContent::Audio then [content.audio.audio, content.audio.file_name] 
-            when TD::Types::MessageContent::Video then [content.video.video, content.video.file_name] 
-            when TD::Types::MessageContent::Document then [content.document.document, content.document.file_name]
+            when TD::Types::MessageContent::Sticker then [content.sticker.sticker, 'sticker.webp']
+            when TD::Types::MessageContent::VoiceNote then [content.voice_note.voice, 'voicenote (%i s.).oga' % content.voice_note.duration]
+            when TD::Types::MessageContent::VideoNote then [content.video_note.video, 'videonote (%i s.).mp4' % content.video_note.duration]
+            when TD::Types::MessageContent::Animation then [content.animation.animation, 'animation.mp4' ]
+            when TD::Types::MessageContent::Photo then [content.photo.sizes[-1].photo, 'photo' + content.photo.id + '.jpg']
+            when TD::Types::MessageContent::Audio then [content.audio.audio, 'audio' + content.audio.file_name] 
+            when TD::Types::MessageContent::Video then [content.video.video, 'video' + content.video.file_name] 
+            when TD::Types::MessageContent::Document then [content.document.document, 'doc' + content.document.file_name]
         end
         
         # text handling
         text = case content
+            when TD::Types::MessageContent::Sticker then content.sticker.emoji
             when TD::Types::MessageContent::BasicGroupChatCreate, TD::Types::MessageContent::SupergroupChatCreate then "has created chat"
             when TD::Types::MessageContent::ChatJoinByLink then "joined chat via invite link"
             when TD::Types::MessageContent::ChatAddMembers then "invited %s" % self.format_contact(message.content.member_user_ids.first)
@@ -147,6 +148,7 @@ class TelegramClient
             when TD::Types::MessageContent::Text then content.text.text
             when TD::Types::MessageContent::VoiceNote then content.caption.text
             when TD::Types::MessageContent::VideoNote then ''
+            when TD::Types::MessageContent::Animation then ''
             else "unknown message type %s" % update.message.content.class
         end
         
