@@ -37,7 +37,7 @@ class TelegramClient
         @me = nil # self telegram profile
         @online = nil # we do not know
         @auth_state = 'nil' # too.
-        @cache = {chats: {}, users: {}, photos: {}} # cache 
+        @cache = {chats: {}, users: {}, photos: {}, subscribed: []} # cache 
     end
     
     # initialize and connect telegram client #
@@ -117,6 +117,9 @@ class TelegramClient
         @logger.debug 'Got NewMessage update'
         @logger.debug update.message.to_json
         @logger.info 'New message from Telegram chat %s' % update.message.chat_id
+
+        # add to contact list 
+        self.process_chat_info(update.message.chat_id, true) if not @cache[:subscribed].include? update.message.chat_id
 
         # message content
         prefix = []
@@ -360,12 +363,15 @@ class TelegramClient
     end
 
     # update users information and save it to cache #
-    def process_chat_info(chat_id, subscription = true)
+    def process_chat_info(chat_id, subscription = false)
         @logger.debug 'Updating chat id %s..' % chat_id.to_s
         @client.get_chat(chat_id).then { |chat|    
             @cache[:chats][chat_id] = chat   # cache chat 
             @client.download_file(chat.photo.small.id).then{|f| @cache[:photos][chat_id] = f}.wait if chat.photo # download userpic
-            @xmpp.presence(@jid, chat_id.to_s, :subscribe, nil, nil, chat.title.to_s) if subscription # send subscription request
+            if subscription then # send subscription request
+                @xmpp.presence(@jid, chat_id.to_s, :subscribe, nil, nil, chat.title.to_s) 
+                @cache[:subscribed] << chat_id
+            end
             self.process_status_update(chat_id, chat.title.to_s, true) if chat.id < 0 # groups presence 
         }.wait
         return @cache[:chats][chat_id] if @cache[:chats].key? chat_id 
