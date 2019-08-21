@@ -1,29 +1,38 @@
-::HELP_GATE_CMD= "/login phone — sign in\n" \
-                 "/logout — sign out\n" \
-                 "/code — check one-time code\n" \
-                 "/password — check 2fa password\n" \
-                 "/setusername username — update @username\n" \
-                 "/setname first last — update name\n" \
-                 "/setbio — update about\n" \
-                 "/setpassword [old] [new] — set or remove password"
-::HELP_CHAT_CMD= "/d [n] — delete your last message(s)\n" \
-                 "/s regexp replace — edit your last message\n" \
-                 "/search string [limit] — search <string> in current chat\n" \
-                 "/history [limit] — get last [limit] messages from current chat\n" \
-                 "/add @username — add @username to your chat list\n" \
-                 "/join https://t.me/invite_link — join to chat via invite link\n" \
-                 "/supergroup title description — create new supergroup «title» with «description»\n" \
-                 "/channel title description — create new channel «title» with «description»\n" \
-                 "/secret — create secretchat with current user\n" \
-                 "/group title — create groupchat «title» with current user\n" \
-                 "/block — blacklist current user\n" \
-                 "/unblock — unblacklist current user\n" \
-                 "/invite id or @username — add user to current chat\n" \
-                 "/kick id or @username — remove user from current chat\n" \
-                 "/ban id or @username [hours] — restrict @username from current chat for [hours] or forever\n" \
-                 "/leave — leave current chat\n" \
-                 "/close — close current secret chat\n" \
-                 "/delete — delete current chat from chat list"
+HELP_GATE_CMD = %q{Available commands: 
+    /login phone — sign in
+    /logout — sign out
+    /code — check one-time code
+    /password — check 2fa password
+    /setusername username — update @username
+    /setname first last — update name
+    /setbio — update about
+    /setpassword [old] [new] — set or remove password
+    /config [param] [value] — view or update configuration options
+    Configuration options
+    timezone 00:00 — adjust timezone for Telegram user statuses
+}
+
+HELP_CHAT_CMD= %q{Available commands:
+    /d [n] — delete your last message(s)
+    /s regexp replace — edit your last message
+    /add @username — add @username to your chat list
+    /join https://t.me/invite_link — join to chat via invite link
+    /group title — create groupchat «title» with current user
+    /supergroup title description — create new supergroup «title» with «description»
+    /channel title description — create new channel «title» with «description»
+    /secret — create secretchat with current user
+    /search string [limit] — search <string> in current chat
+    /history [limit] — get last [limit] messages from current chat
+    /block — blacklist current user
+    /unblock — unblacklist current user
+    /invite id or @username — add user to current chat
+    /kick id or @username — remove user from current chat
+    /ban id or @username [hours] — restrict @username from current chat for [hours] or forever
+    /leave — leave current chat
+    /close — close current secret chat
+    /delete — delete current chat from chat list
+    /members [query] — search members [by optional query] in current chat (requires admin rights)
+}
 
 class TelegramClient
 
@@ -33,9 +42,8 @@ class TelegramClient
     ## configure tdlib (when valid tdlib params specified) or zhabogram
     def self.configure(**config) 
         @@config = @@config.merge(config)  
-        TD.config[:lib_path] = @@config[:lib_path]
-        TD.configure do |config| @@config[:client].each do |key,value| config.client[key] = value if config.client.key? key end; end
-        TD::Api.set_log_verbosity_level(@@config[:verbosity])
+        TD.config.update(config[:tdlib])
+        TD::Api.set_log_verbosity_level(@@config[:tdlib_verbosity])
     end
     
     ## initialize telegram client instance (xmpp = XMPP stream, jid = user's jid , login = user's telegram login (for now, it is phone number)
@@ -45,8 +53,6 @@ class TelegramClient
         @jid       = jid
         @session   = session
         @cache     = {chats: {nil => []}, users: {}}
-        @xmpp.send_presence(@jid, nil, :subscribe)
-        @xmpp.send_presence(@jid, nil, :probe) 
     end
     
     ## connect telegram client 
@@ -98,17 +104,11 @@ class TelegramClient
             @logger.warn 'Waiting for 2FA password..'
             @xmpp.send_message(@jid, nil, 'Please, enter 2FA passphrase via /password 12345')
         when TD::Types::AuthorizationState::Ready  # stage 3: auth completed
+            @session[:login] ||= @me.phone_number 
             @logger.warn 'Authorization successful!'
             @telegram.get_me.then{|me| @me = me}.wait
             @telegram.get_chats(limit=999).wait
-            @session[:login] ||= @me.phone_number 
             @xmpp.send_presence(@jid, nil, nil, nil, "Logged in %s" % @session[:login])
-        when TD::Types::AuthorizationState::Closing, TD::Types::AuthorizationState::Closed # disconnecting
-            @logger.warn 'Closing session..'
-            self.disconnect()
-        when TD::Types::AuthorizationState::LoggingOut  # logout
-            @logger.warn 'Logging out..'
-            @session[:login] = nil
         end
     end
 
@@ -257,30 +257,32 @@ class TelegramClient
             when '/setname'     then @telegram.set_name(args[0] || '', args[1] || '')   #  set My Name
             when '/setbio'      then @telegram.set_bio(args[0] || '')  # set About
             when '/setpassword' then @telegram.set_password((args[1] ? args[0] : ''), args[1])  # set password
-            else  @xmpp.send_message(@jid, nil, ::HELP_GATE_CMD)
+            when '/config'      then @xmpp.send_message(@jid, nil, args[1] ? "%s set to %s" % [args[0], @session.store(args[0].to_sym, args[1])] : @session.map{|attr| "%s is set to %s" % attr}.join("\n")) 
+            when '/help'        then @xmpp.send_message(@jid, nil, HELP_GATE_COMMANDS)
             end
             return true # stop executing 
         else  # chat commands
             case cmd
-            when '/d'           then @telegram.delete_messages(chat.id, @telegram.search_chat_messages(chat.id, 0, args[0]||1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.map(&:id), true) # delete last message(s)
-            when '/s'           then @telegram.search_chat_messages(chat.id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.each do |msg| self.process_outgoing_message(chat.id, msg.content.text.text.to_s.gsub(Regexp.new(args[0]),args[1..-1].join(' ')), msg.id) end # edit last message
-            when '/add'         then @telegram.search_public_chat(args[0]).then{|chat| @xmpp.send_presence(@jid, chat.id, :subscribe)}.wait # add @contact 
-            when '/join'        then @telegram.join_chat_by_invite_link(args[0])  # join https://t.me/publichat
-            when '/supergroup'  then @telegram.create_new_supergroup_chat(args[0], args[1..-1].join(' '), is_channel: false) # create new supergroup 
-            when '/channel'     then @telegram.create_new_supergroup_chat(args[0], args[1..-1].join(' '), is_channel: true)  # create new channel 
-            when '/secret'      then @telegram.create_new_secret_chat(chat.id)  if user   # create secret chat with current user
-            when '/group'       then @telegram.create_new_basic_group_chat(chat.id, args[0])  if user  # create group chat with current user 
-            when '/block'       then @telegram.block_user(chat.id)  if user # blacklists current user
-            when '/unblock'     then @telegram.unblock_user(chat.id)  if user  # unblacklists current user 
-            when '/invite'      then @telegram.add_chat_member(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i)) if chat.id < 0  # invite @username to current groupchat 
-            when '/kick'        then @telegram.set_chat_member_status(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i)) if chat.id < 0  # kick @username from current group chat
-            when '/ban'         then @telegram.set_chat_member_status(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i), TD::Types::ChatMemberStatus::Banned(banned_until_date: (args[1].to_i > 0 ? Time.now.getutc.to_i+(args[1].to_i*3600) : 0))) if chat.id < 0 # ban @username from current chat [for N hours]
-            when '/leave'       then @telegram.leave_chat(chat.id).then{|result| @xmpp.send_presence(@jid, chat_id, :unsubscribed)} if chat.type.instance_of? TD::Types::ChatType::Supergroup or chat.type.instance_of? TD::Types::ChatType::BasicGroup  # leave current chat  
-            when '/close'       then @telegram.close_secret_chat(chat.type.secret_chat_id).then{|result| @xmpp.send_presence(@jid, chat_id, :unsubscribed)} if chat.type.instance_of? TD::Types::ChatType::Secret   # close secret chat 
-            when '/delete'      then @telegram.delete_chat_history(chat.id, true).then{|result| @xmpp.send_presence(@jid, chat_id, :unsubscribed)} # delete current chat 
-            when '/search'      then @telegram.search_chat_messages(chat.id, 0, args[1]||10, query: args[0]||nil, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.reverse.each do |msg| @xmpp.send_message(@jid, chat_id, self.format_message(nil,nil,nil,msg)) end # search messages within current chat
-            when '/history'     then @telegram.get_chat_history(chat.id, 0, 0, args[0]||10).value.messages.reverse.each do |msg| @xmpp.send_message(@jid, chat_id, self.format_message(nil,nil,msg)) end # get latest entries from history
-            when '/help'        then @xmpp.send_message(@jid, chat_id, ::HELP_CHAT_CMD)
+            when '/d'          then @telegram.delete_messages(chat.id, @telegram.search_chat_messages(chat.id, 0, args[0]||1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.map(&:id), true) # delete last message(s)
+            when '/s'          then @telegram.search_chat_messages(chat.id, 0, 1, sender_user_id: @me.id, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.each do |msg| self.process_outgoing_message(chat.id, msg.content.text.text.to_s.gsub(Regexp.new(args[0]),args[1..-1].join(' ')), msg.id) end # edit last message
+            when '/add'        then @telegram.search_public_chat(args[0]).then{|chat| @xmpp.send_presence(@jid, chat.id, :subscribe)}.wait # add @contact 
+            when '/join'       then @telegram.join_chat_by_invite_link(args[0])  # join https://t.me/publichat
+            when '/supergroup' then @telegram.create_new_supergroup_chat(args[0], args[1..-1].join(' '), is_channel: false) # create new supergroup 
+            when '/channel'    then @telegram.create_new_supergroup_chat(args[0], args[1..-1].join(' '), is_channel: true)  # create new channel 
+            when '/secret'     then @telegram.create_new_secret_chat(chat.id)  if user   # create secret chat with current user
+            when '/group'      then @telegram.create_new_basic_group_chat(chat.id, args[0])  if chat.id > 0  # create group chat with current user 
+            when '/block'      then @telegram.block_user(chat.id)  if chat.id > 0 # blacklists current user
+            when '/unblock'    then @telegram.unblock_user(chat.id)  if chat.id > 0  # unblacklists current user 
+            when '/invite'     then @telegram.add_chat_member(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i)) if chat.id < 0  # invite @username to current groupchat 
+            when '/kick'       then @telegram.set_chat_member_status(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i)) if chat.id < 0  # kick @username from current group chat
+            when '/ban'        then @telegram.set_chat_member_status(chat.id, (args[0].to_i == 0 ? @telegram.search_public_chat(args[0]).value.id : args[0].to_i), TD::Types::ChatMemberStatus::Banned(banned_until_date: (args[1].to_i > 0 ? Time.now.getutc.to_i+(args[1].to_i*3600) : 0))) if chat.id < 0 # ban @username from current chat [for N hours]
+            when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, chat_id, :unsubscribed)} if chat.type.instance_of? TD::Types::ChatType::Supergroup or chat.type.instance_of? TD::Types::ChatType::BasicGroup  # leave current chat  
+            when '/close'      then @telegram.close_secret_chat(chat.type.secret_chat_id).then{@xmpp.send_presence(@jid, chat_id, :unsubscribed)} if chat.type.instance_of? TD::Types::ChatType::Secret   # close secret chat 
+            when '/delete'     then @telegram.delete_chat_history(chat.id, true).then{@xmpp.send_presence(@jid, chat_id, :unsubscribed)} # delete current chat 
+            when '/search'     then @telegram.search_chat_messages(chat.id, 0, args[1]||10, query: args[0]||nil, filter: TD::Types::SearchMessagesFilter::Empty.new).value.messages.reverse.each do |msg| @xmpp.send_message(@jid, chat_id, self.format_message(nil,nil,nil,msg)) end # search messages within current chat
+            when '/history'    then @telegram.get_chat_history(chat.id, 0, 0, args[0]||10).value.messages.reverse.each do |msg| @xmpp.send_message(@jid, chat_id, self.format_message(nil,nil,msg)) end # get latest entries from history
+            when '/members'    then @telegram.search_chat_members(chat.id,9999,query:args[0],filter: TD::Types::ChatMembersFilter::Members.new).then{|members| @xmpp.send_message(@jid, chat_id, (members.members.map do |user| "%s | role: %s" % [self.fmt_chat(user.user_id), user.status.class] end).join("\n")) }  # members list (for admins)
+            when '/help'       then @xmpp.send_message(@jid, chat_id, HELP_CHAT_CMD)
             else return # continue executing
             end
             return true # stop executing

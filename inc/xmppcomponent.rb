@@ -12,7 +12,6 @@ class XMPPComponent
 
     ##  connect to XMPP server 
     def connect() 
-        Jabber::debug = @config[:debug]
         begin
             @component = Jabber::Component.new(@config[:jid]) # init XMPP component 
             @component.connect(@config[:host], @config[:port])  # connect to XMPP server
@@ -24,6 +23,7 @@ class XMPPComponent
             @component.add_iq_callback       do |stanza| self.handle_vcard_iq(stanza)     if stanza.type == :get    and stanza.vcard                      end  # vcards handler 
             @logger.warn 'Connected to XMPP server' 
             @db.transaction do  @db[:sessions].each do |jid, session| @sessions[jid] = TelegramClient.new(self, jid, session) end end # probe all known sessions
+            @sessions.each_key do |jid| self.send_presence(jid,nil,:probe) end
             Thread.new { while @component.is_connected? do sleep 60; @queue.delete_if {|_, presence| @component.send(presence) || true } end }   # status updater thread
             Thread.stop()  # stop main thread loop 
         rescue Exception => error
