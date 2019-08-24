@@ -126,7 +126,7 @@ class TelegramClient
             when TD::Types::MessageContent::ChatDeleteMember then "kicked %s" % self.format_contact(update.message.content.user_id)
             when TD::Types::MessageContent::PinMessage then "pinned message: %s" % self.format_message(update.message.chat_id, content.message_id)
             when TD::Types::MessageContent::ChatChangeTitle then "chat title set to: %s" % update.message.content.title
-            when TD::Types::MessageContent::Location then "coordinates: %s | https://www.google.com/maps/search/%s,%s/" %  [content.location.latitude, content.location.longitude]
+            when TD::Types::MessageContent::Location then "coordinates: %{latitude},%{longitude} | https://www.google.com/maps/search/%{latitude},%{longitude}/" %  content.location.to_h
             when TD::Types::MessageContent::Photo, TD::Types::MessageContent::Audio, TD::Types::MessageContent::Video, TD::Types::MessageContent::Document then content.caption.text
             when TD::Types::MessageContent::Text then content.text.text
             when TD::Types::MessageContent::VoiceNote then content.caption.text
@@ -241,7 +241,7 @@ class TelegramClient
         text = TD::Types::FormattedText.new(text: (reply or file) ? text.lines[1..-1].join : text, entities: [])    # remove first line from text
         message = TD::Types::InputMessageContent::Text.new(text: text, disable_web_page_preview: false, clear_draft: false)  # compile our message
         document = TD::Types::InputMessageContent::Document.new(document: file, caption: text)  if file  # we can try to send a document 
-        message_id ? @telegram.edit_message_text(chat_id, message_id, message) : @telegram.send_message(chat_id, document || message, reply_to_message_id: reply || 0).rescue{@telegram.send_message(chat_id, message, 0)} 
+        message_id ? @telegram.edit_message_text(chat_id, message_id, message) : @telegram.send_message(chat_id,document||message, reply_to_message_id: reply||0).rescue{|why| @xmpp.send_message(@jid, chat_id,"Message not sent: %s" % why)} 
     end
         
     ##  /commands (some telegram actions)

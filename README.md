@@ -31,13 +31,13 @@ Next, rename **config.yml.example** to **config.yml** and edit **xmpp** section 
 
 
 ```
-xmpp:
-	db_path: 'users.db'  
+:xmpp:
+	db 'users.db'  
 	jid: 'tlgrm.localhost'  
 	host: 'localhost'  
 	port: 8888  
 	secret: 'secret'  
-	loglevel: 0   
+	loglevel: :warn   
 ```
 
 ### Configuration ###
@@ -45,9 +45,12 @@ xmpp:
 It is good idea to obtain Telegram API ID from [**https://my.telegram.org**](https://my.telegram.org) to remove demo key requests limit, and then edit in **config.yml**:
 
 ```
-telegram:
-    api_id: '845316' # telegram API ID (my.telegram.org) #
-    api_hash: '27fe5224bc822bf3a45e015b4f9dfdb7' # telegram API HASH (my.telegram.org) #
+:telegram:
+    :tdlib:
+        :lib_path: 'lib/'
+        :client:
+            :api_id: '845316' # telegram API ID (my.telegram.org) #
+            :api_hash: '27fe5224bc822bf3a45e015b4f9dfdb7' # telegram API HASH (my.telegram.org) #
     ...
 ```
 
@@ -66,10 +69,10 @@ server {
 }
 ```
 
-You need to set `content_path` and `content_link` in **config.yml**.  
+You need to set `:content: → :path: and :link:` **config.yml**.  
   
-Set `content_path` according to location (for our example it will be `/var/zhabogram/content`).  
-Set `content_link` according to server_name (for our example it will be `http://tlgrm.localhost`)  
+Set `:path:` according to location (for our example it will be `/var/zhabogram/content`).  
+Set `:link:` according to server_name (for our example it will be `http://tlgrm.localhost`)  
 
 
 ### How to send files to Telegram chats ###
@@ -93,7 +96,7 @@ modules:
 Then you need to setup nginx proxy that will serve `get_url` path, because Telegram will not handle URLs with non-default http(s) ports.  
 Example nginx config:  
 
-```
+/```
 server {
 	listen 80;
 	listen 443 ssl;
@@ -115,3 +118,5 @@ server {
 }
 
 ```
+
+Finally, update `:upload:` in your config.yml to match `server_name` in nginx config.

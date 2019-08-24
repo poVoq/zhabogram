@@ -1,23 +1,23 @@
 :telegram:
-    :lib_path: 'lib/'
-    :verbosity: 1
     :loglevel: :warn
-    :client:
-        :api_id: '17349'
-        :api_hash: '344583e45741c457fe1862106095a5eb'
-        :device_model: 'zhabogram'
-        :application_version: '2.0'
-        :use_chat_info_database: false
     :content:
-        :path: '/var/www/zhabogram/media' # webserver workdir 
-        :link: 'http://localhost/zhabogram/media' # webserver public address
-        :upload: 'https://localhost/upload' # xmpp http upload address
+        :path: '/var/www/zhabogram/content' # webserver workdir 
+        :link: 'http://tlgrm.localhost/content' # webserver public address
+        :upload: 'https:///xmppfiles.localhost' # xmpp http upload address
+    :tdlib_verbosity: 1
+    :tdlib:
+        :lib_path: 'lib/'
+        :client:
+            :api_id: '17349'
+            :api_hash: '344583e45741c457fe1862106095a5eb'
+            :device_model: 'zhabogram'
+            :application_version: '2.0'
+            :use_chat_info_database: false
     
 :xmpp:
-    :debug: false
     :loglevel: :warn
+    :jid: 'tlgrm.localhost'
     :host: '127.0.0.1'
     :port: 8899
-    :jid: 'tlgrm.localhost'
     :password: 'password'
     :db: 'sessions.dat'
