@@ -1,0 +1,4 @@
+config.yml
+sessions.dat
+/sessions/*
+/content/*
