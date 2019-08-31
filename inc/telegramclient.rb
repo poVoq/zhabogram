@@ -258,7 +258,7 @@ class TelegramClient
             when '/setbio'      then @telegram.set_bio(args[0] || '')  # set About
             when '/setpassword' then @telegram.set_password((args[1] ? args[0] : ''), args[1])  # set password
             when '/config'      then @xmpp.send_message(@jid, nil, args[1] ? "%s set to %s" % [args[0], @session.store(args[0].to_sym, args[1])] : @session.map{|attr| "%s is set to %s" % attr}.join("\n")) 
-            when '/help'        then @xmpp.send_message(@jid, nil, HELP_GATE_COMMANDS)
+            when '/help'        then @xmpp.send_message(@jid, nil, HELP_GATE_CMD)
             end
             return true # stop executing 
         else  # chat commands
