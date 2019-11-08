@@ -1,3 +1,6 @@
+## Mirror (2019-11-08)##
+From: https://dev.narayana.im/narayana/zhabogram
+
 ### Dependencies ###
 
 * Ruby >= 1.9
