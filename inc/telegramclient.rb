@@ -109,6 +109,8 @@ class TelegramClient
             @telegram.get_me.then{|me| @me = me}.wait
             @telegram.get_chats(limit=999).wait
             @xmpp.send_presence(@jid, nil, nil, nil, "Logged in %s" % @session[:login])
+            @xmpp.send_presence(@jid, nil, :subscribe, nil, nil)
+            @xmpp.send_presence(@jid, nil, :subscribed, nil, nil)
         end
     end
 
