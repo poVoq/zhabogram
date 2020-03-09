@@ -8,8 +8,10 @@ HELP_GATE_CMD = %q{Available commands:
     /setbio — update about
     /setpassword [old] [new] — set or remove password
     /config [param] [value] — view or update configuration options
+
     Configuration options
-    timezone 00:00 — adjust timezone for Telegram user statuses
+    timezone <timezone> — adjust timezone for Telegram user statuses (example: +02:00)
+    keeponline <bool> — always keep telegram session online and rely on jabber offline messages (example: true)
 }
 
 HELP_CHAT_CMD= %q{Available commands:
@@ -52,13 +54,14 @@ class TelegramClient
         @xmpp      = xmpp
         @jid       = jid
         @session   = session
+        @resources = Set.new
         @cache     = {chats: {nil => []}, users: {}}
-        @resources = []
+        self.connect() if @session[:keeponline] == 'true'
     end
     
     ## connect telegram client 
     def connect(resource=nil)
-        return self.refresh(resource) if self.online? # already connected
+        return self.roster(resource) if self.online? # already connected
         @logger.warn 'Connecting to Telegram network..' 
         @telegram = TD::Client.new(database_directory: 'sessions/' + @jid, files_directory: 'sessions/' + @jid + '/files/')
         @telegram.on(TD::Types::Update::AuthorizationState) do |u| @logger.debug(u);  self.update_authorizationstate(u)  end
@@ -69,35 +72,32 @@ class TelegramClient
         @telegram.on(TD::Types::Update::MessageContent)     do |u| @logger.debug(u);  self.update_messagecontent(u)      end  
         @telegram.on(TD::Types::Update::DeleteMessages)     do |u| @logger.debug(u);  self.update_deletemessages(u)      end  
         @telegram.on(TD::Types::Update::File)               do |u| @logger.debug(u);  self.update_file(u)                end
-        @telegram.connect()
+        @telegram.connect().wait()
         @resources << resource
     end
     
     ## disconnect telegram client 
-    def disconnect(resource=nil)
-        @resources.delete resource 
-        return if @resources.count > 0 or not self.online? 
+    def disconnect(resource=nil, quit=false)
+        @resources.delete(resource)
+        return unless (@resources.empty? && @session[:keeponline] != 'true') || quit
         @logger.warn 'Disconnecting from Telegram network..'
-        @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unavailable) end # we're offline (unsubscribe if logout)
-        @telegram.dispose()
+        @telegram.dispose() if self.online?
         @telegram = nil
+        @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unavailable) end
     end
 
-    ## refresh roster
-    def refresh(resource=nil)
-        return if @resources.include? resource 
-        @logger.warn 'Refreshing roster for resource %s' % resource
-        @cache[:chats].each_key do |chat| self.process_status_update(chat) if chat; end
+    ## resend statuses to (to another resource for example)
+    def roster(resource=nil)
+        return if @resources.include? resource  # we know it
+        @logger.warn 'Sending roster for %s' % resource
+        @cache[:chats].each_key do |chat| self.process_status_update(chat) end
+        @xmpp.send_presence(@jid, nil, nil, nil, "Logged in as: %s" % @session[:login]) 
         @resources << resource
     end
     
     ## online?
     def online? 
-        @telegram and @telegram.alive? 
-    end
-    
-    def authorized?
-        @telegram and @telegram.alive and @state == TD::Types::AuthorizationState::Ready
+        @telegram and @telegram.alive?
     end
     
     
@@ -124,9 +124,9 @@ class TelegramClient
             @logger.warn 'Authorization successful!'
             @telegram.get_me.then{|me| @me = me}.wait
             @telegram.get_chats(limit=999).wait
-            @xmpp.send_presence(@jid, nil, nil, nil, "Logged in %s" % @session[:login])
             @xmpp.send_presence(@jid, nil, :subscribe, nil, nil)
             @xmpp.send_presence(@jid, nil, :subscribed, nil, nil)
+            @xmpp.send_presence(@jid, nil, nil, nil, "Logged in as: %s" % @session[:login])
         end
     end
 
@@ -222,7 +222,7 @@ class TelegramClient
 
     ##  get user and chat information from cache (or try to retrieve it, if missing)  
     def get_contact(id)
-        return unless self.online?  # we're offline.
+        return unless self.online? && id  # we're offline.
         @telegram.search_public_chat(id).then{|chat| id = chat.id }.wait if id[0] == '@'
         @telegram.get_user(id).wait if not @cache[:users][id] and (id>0) 
         @telegram.get_chat(id).wait if not @cache[:chats][id]
