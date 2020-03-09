@@ -161,8 +161,14 @@ class TelegramClient
             when TD::Types::MessageContent::Video then [content.video.video, 'video' + content.video.file_name + '.mp4'] 
             when TD::Types::MessageContent::Document then [content.document.document, content.document.file_name]
         end
+<<<<<<< HEAD
         @telegram.download_file(file[0].id, 10, 0, 0, false) if file and not file[0].local.is_downloading_completed # download file(s)
         prefix << (update.message.is_outgoing ? '➡ ' : '⬅ ') + update.message.id.to_s  # message direction
+=======
+        @telegram.download_file(file[0].id) if file and not file[0].local.is_downloading_completed # download file(s)
+        prefix << DateTime.strptime((update.message.date+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S") if show_date # show date if its 
+        prefix << (update.message.is_outgoing ? '⇾ ' : '⇽ ') + update.message.id.to_s  # message direction
+>>>>>>> 8ed5710c13df501206d72cae229b7dfafaee2e16
         prefix << "%s" % self.format_contact(update.message.sender_user_id) if update.message.chat_id < 0 and update.message.sender_user_id # show sender in group chats 
         prefix << "reply: %s" % self.format_message(update.message.chat_id, update.message.reply_to_message_id, true) if update.message.reply_to_message_id.to_i != 0 # reply to
         prefix << "fwd: %s" % self.format_forward(update.message.forward_info) if update.message.forward_info # forward
