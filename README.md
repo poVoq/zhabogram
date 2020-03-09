@@ -1,8 +1,8 @@
 ### Dependencies ###
 
-* Ruby >= 1.9
+* Ruby >= 2.4
 * xmpp4r == 0.5.6
-* tdlib-ruby == 2.0 with pre-compiled _libtdjson.so_
+* tdlib-ruby == 2.2 with pre-compiled _libtdjson.so_ (1.6)
 
 There is pre-compiled _libtdjson.so_ for Debian Stretch x64 in repository.  
 For any other distro you need to manually compile [**tdlib**](https://github.com/tdlib/td) and place _libtdjson.so_ to relative **lib/** directory (or **LD_LIBRARY_PATH**).

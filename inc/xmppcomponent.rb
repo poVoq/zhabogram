@@ -28,7 +28,7 @@ class XMPPComponent
             Thread.stop()  # stop main thread loop 
         rescue Exception => error
             @logger.error 'Disconnecting.. %s' % error.to_s
-            @sessions.each_value do |session| session.disconnect() end  # close all sessions
+            @sessions.each_value do |session| session.disconnect(nil, true) end  # close all sessions
             @db.transaction do @sessions.each do |jid, session| @db[:sessions][jid] = session.session end end # save sessions
             @component.on_exception do |exception,| end # disable exception handling 
             @component.close()  # close stream
