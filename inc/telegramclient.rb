@@ -334,8 +334,6 @@ class TelegramClient
     end
     
     def format_forward(fwd)
-        puts 'fwd'
-        puts fwd.to_json
         str = case fwd.origin
             when TD::Types::MessageForwardOrigin::User then self.format_contact(fwd.origin.sender_user_id)
             when TD::Types::MessageForwardOrigin::HiddenUser then fwd.origin.sender_name
