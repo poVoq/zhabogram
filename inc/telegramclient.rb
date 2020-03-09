@@ -164,7 +164,7 @@ class TelegramClient
         end
         @telegram.download_file(file[0].id) if file and not file[0].local.is_downloading_completed # download file(s)
         prefix << DateTime.strptime((update.message.date+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S") if show_date # show date if its 
-        prefix << (update.message.is_outgoing ? '➡ ' : '⬅ ') + update.message.id.to_s  # message direction
+        prefix << (update.message.is_outgoing ? '⇾ ' : '⇽ ') + update.message.id.to_s  # message direction
         prefix << "%s" % self.format_contact(update.message.sender_user_id) if update.message.chat_id < 0 and update.message.sender_user_id # show sender in group chats 
         prefix << "fwd: %s" % self.format_contact(update.message.forward_info.sender_user_id) if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedFromUser  # fwd  from user 
         prefix << "fwd: %s%s" % [self.format_contact(update.message.forward_info.chat_id), (update.message.forward_info.author_signature != '') ? " (%s)"%update.message.forward_info.author_signature : ''] if update.message.forward_info.instance_of? TD::Types::MessageForwardInfo::MessageForwardedPost  # fwd from chat 
