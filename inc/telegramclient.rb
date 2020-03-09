@@ -1,3 +1,17 @@
+DEFAULTS = {
+    lib_path: 'lib/', 
+    verbosity: 2, 
+    loglevel: :debug, 
+    client: {api_id: 50322, api_hash: '9ff1a639196c0779c86dd661af8522ba', use_chat_info_database: false}, 
+    content: {path: '', link: '', upload: ''}
+}
+
+PERMISSIONS = {
+    admin: {can_be_edited: true, can_change_info: true, can_post_messages: true, can_edit_messages: true, can_delete_messages: true, can_invite_users: true, can_restrict_members: true, can_pin_messages: true, can_promote_members: false},
+    member: TD::Types::ChatPermissions.new(can_send_messages: true, can_send_media_messages: true, can_send_polls: true, can_send_other_messages: true, can_add_web_page_previews: true, can_change_info: true, can_invite_users: true, can_pin_messages: true),
+    readonly: TD::Types::ChatPermissions.new(can_send_messages: false, can_send_media_messages: false, can_send_polls: false, can_send_other_messages: false, can_add_web_page_previews: false, can_change_info: false, can_invite_users: false, can_pin_messages: false),
+}
+    
 HELP_GATE_CMD = %q{Available commands: 
     /login phone — sign in
     /logout — sign out
@@ -26,9 +40,15 @@ HELP_CHAT_CMD= %q{Available commands:
     /block — blacklist current user
     /unblock — unblacklist current user
     /invite id or @username — add user to current chat
+    /link — get invite link for current chat
     /kick id or @username — remove user from current chat
-    /ban id or @username [hours] — restrict @username from current chat for [hours] or forever
+    /mute id or @username [hours] — mute user in current chat
+    /unmute id or @username — unrestrict user from current chat
+    /ban id or @username [hours] — restrict @username from current chat 
+    /unban id or @username — unbans @username in current chat (and devotes from admins)
+    /promote id or @username — promote user to admin in current chat
     /leave — leave current chat
+    /leave! — leave current chat (for owners)
     /close — close current secret chat
     /delete — delete current chat from chat list
     /members [query] — search members [by optional query] in current chat (requires admin rights)
@@ -37,18 +57,16 @@ HELP_CHAT_CMD= %q{Available commands:
 
 class TelegramClient
 
-    attr_reader :session, :state
-    @@config = {loglevel: :debug, verbosity: 2, lib_path: 'lib/', client: {api_id: 50322, api_hash: '9ff1a639196c0779c86dd661af8522ba', use_chat_info_database: false}, content: {path:'',link:'',upload:''}}  # defaults 
-
     ## configure tdlib (when valid tdlib params specified) or zhabogram
     def self.configure(**config) 
-        @@config = @@config.merge(config)  
+        @@config = DEFAULTS.merge(config)  
         TD.config.update(config[:tdlib])
         TD::Api.set_log_verbosity_level(@@config[:tdlib_verbosity])
     end
     
     ## initialize telegram client instance (xmpp = XMPP stream, jid = user's jid , login = user's telegram login (for now, it is phone number)
     def initialize(xmpp, jid, **session)
+        return unless @@config
         @logger    = Logger.new(STDOUT, level: @@config[:loglevel], progname: 'TelegramClient: %s | %s' % [jid, session[:login]] )
         @xmpp      = xmpp
         @jid       = jid
@@ -225,6 +243,7 @@ class TelegramClient
         return @cache[:chats][id], @cache[:users][id]
     end
     
+    ##  get last messages from specified chat
     def get_lastmessages(id, query=nil, from=nil, count=1)
         result = @telegram.search_chat_messages(id, query.to_s, from.to_i, 0, 0, count.to_i, TD::Types::SearchMessagesFilter::Empty.new).value
         return (result) ? result.messages : [] 
@@ -247,15 +266,17 @@ class TelegramClient
             when TD::Types::UserStatus::Offline   then show, status = (Time.now.getutc.to_i-status.was_online.to_i<3600) ? :away : :xa, 
                                                                        DateTime.strptime((status.was_online+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
         end
-        @xmpp.send_presence(@jid, id, nil, show, status, nil, photo, immed) 
+        return @xmpp.send_presence(@jid, id, nil, show, status, nil, photo, immed) 
     end
 
     ##  send outgoing message to telegram user  
     def process_outgoing_message(id, text) 
         return if self.process_command(id, text.split.first, text.split[1..-1]) or not self.online? # try to execute commands
         @logger.warn 'Sending message to chat %s' % id
-        message, reply = self.format_input(text)
-        @telegram.send_message(id, reply, nil, nil, message).rescue{|e| @xmpp.send_message(@jid, id, "Not sent: %s" % e)} 
+        reply = text.lines[0].scan(/\d+/).first.to_i if text.lines[0] =~ /^> ?[0-9]{10}/ 
+        text = TD::Types::FormattedText.new(text: !reply ? text : text.lines[1..-1].join, entities: [])
+        message = TD::Types::InputMessageContent::Text.new(text: text, disable_web_page_preview: false, clear_draft: false)
+        return (id) ? @telegram.send_message(id, reply.to_i, nil, nil, message).rescue{|e| @xmpp.send_message(@jid, id, "Not sent: %s" % e)} : message
     end
         
     ##  /commands (some telegram actions)
@@ -278,7 +299,7 @@ class TelegramClient
         else  # chat commands
             case cmd
             when '/d'          then @telegram.delete_messages(chat.id, self.get_lastmessages(chat.id, nil, @me.id, args[0]||1).map(&:id), true) # delete message
-            when '/s'          then @telegram.edit_message_text(chat.id, self.get_lastmessages(chat.id, nil, @me.id, 1).first.id, nil, self.format_input(args.join(' ')).first) # edit message
+            when '/s'          then @telegram.edit_message_text(chat.id, self.get_lastmessages(chat.id, nil, @me.id, 1).first.id, nil, self.process_outgoing_message(nil, args.join(' '))) # edit message
             when '/add'        then @telegram.search_public_chat(args[0]).then{|chat| @xmpp.send_presence(@jid, chat.id, :subscribe)}.wait # add @contact 
             when '/join'       then @telegram.join_chat_by_invite_link(args[0])  # join https://t.me/publichat
             when '/supergroup' then @telegram.create_new_supergroup_chat(args[0], false, args[1..-1].join(' '), nil) # create new supergroup 
@@ -287,14 +308,20 @@ class TelegramClient
             when '/group'      then @telegram.create_new_basic_group_chat(chat.id, args[0]) # create group chat with current user 
             when '/block'      then @telegram.block_user(chat.id) # blacklists current user
             when '/unblock'    then @telegram.unblock_user(chat.id) # unblacklists current user 
-            when '/invite'     then @telegram.add_chat_member(chat.id, self.get_contact(args[0]).first.id, 100)  # invite @username to current groupchat 
-            when '/kick'       then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, self.format_restrict()) # kick @username from current group chat
-            when '/ban'        then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, self.format_restrict(true, args[1])) # ban @username from current chat [for N hours]
-            when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, id, :unsubscribed)}  # leave current chat  
-            when '/close'      then @telegram.close_secret_chat(chat.type.secret_id).then{@xmpp.send_presence(@jid, id, :unsubscribed)}  # close secret chat 
-            when '/delete'     then @telegram.delete_chat_history(chat.id, true, true).then{@xmpp.send_presence(@jid, id, :unsubscribed)} # delete current chat 
             when '/members'    then @telegram.search_chat_members(chat.id, args[0], 9999, TD::Types::ChatMembersFilter::Members.new).then{|m| @xmpp.send_message(@jid, chat.id, (m.members.map do |u| "%s | role: %s" % [self.format_contact(u.user_id), u.status.class] end).join("\n")) }  # chat members
-            when '/search'     then @telegram.search_chat_messages(chat.id, args[0].to_s, 0, 0, 0, args[1].to_i||100, TD::Types::SearchMessagesFilter::Empty.new).value.messages.reverse.each{|m| @xmpp.send_message(@jid, chat.id, self.format_message(nil,nil,nil,msg))} # search
+            when '/invite'     then @telegram.add_chat_member(chat.id, self.get_contact(args[0]).first.id, 100)  # invite @username to current groupchat 
+            when '/link'       then @telegram.generate_chat_invite_link(chat.id).then{|link| @xmpp.send_message(@jid, chat.id, link.invite_link)} # get link to current chat
+            when '/kick'       then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Left.new()) # kick @username 
+            when '/mute'       then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Restricted.new(is_member: true, restricted_until_date: self.format_bantime(args[0]), permissions: PERMISSIONS[:readonly]))  # mute @username [n hours]
+            when '/unmute'     then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Restricted.new(is_member: true, restricted_until_date: 0, permissions: PERMISSIONS[:member])) # unmute @username 
+            when '/ban'        then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Banned.new(banned_until_date: self.format_bantime(args[0]))) # ban @username [n hours]
+            when '/unban'      then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Member.new()) # unban @username 
+            when '/promote'    then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Administrator.new(custom_title: args[0].to_s, **PERMISSIONS[:admin])) # promote @username to admin 
+            when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # leave current chat  
+            when '/leave!'     then @telegram.delete_supergroup(chat.type.supergroup_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}.rescue{|e| puts e.to_s}  # leave current chat (for owners) 
+            when '/close'      then @telegram.close_secret_chat(chat.type.secret_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
+            when '/delete'     then @telegram.delete_chat_history(chat.id, true, true).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)} # delete current chat 
+            when '/search'     then @telegram.get_messages(chat.id, self.get_lastmessages(chat.id, args[0], 0, args[1]||100).map(&:id)).value.messages.reverse.each{|msg| @xmpp.send_message(@jid, chat.id, self.format_message(chat.id,msg,false))} # message search
             when '/help'       then @xmpp.send_message(@jid, id, HELP_CHAT_CMD)
             else return # continue
             end
@@ -305,7 +332,7 @@ class TelegramClient
     #########################################################################
     # formatting functions  #################################################
     #########################################################################
-    
+        
     def format_contact(id)
         return if not id or id == 0
         chat, user = self.get_contact(id)
@@ -325,31 +352,24 @@ class TelegramClient
         return str
     end
 
-    def format_input(text)
-        reply = text.lines[0].scan(/\d+/).first.to_i if text.lines[0] =~ /^> ?[0-9]{10}/  # quotes 
-        file = TD::Types::InputFile::Remote.new(id: text) if text.start_with? @@config[:content][:upload]  # attaches
-        text = TD::Types::FormattedText.new(text: (reply or file) ? text.lines[1..-1].join : text, entities: [])    # remove first line (quotes/files)
-        input = (file) ? TD::Types::InputMessageContent::Document.new(document: file, caption: text) : TD::Types::InputMessageContent::Text.new(text: text, disable_web_page_preview: false, clear_draft: false)  # message
-        return input, reply.to_i
-    end
-    
-    def format_forward(fwd)
-        str = case fwd.origin
-            when TD::Types::MessageForwardOrigin::User then self.format_contact(fwd.origin.sender_user_id)
-            when TD::Types::MessageForwardOrigin::HiddenUser then fwd.origin.sender_name
-            when TD::Types::MessageForwardOrigin::Channel then [self.format_contact(fwd.origin.chat_id), fwd.origin.author_signature].join(' ') 
-        end
-        return str
-    end
-
     def format_content(file, fname) 
         str = "%s (%d kbytes) | %s/%s%s" % [fname, file.size/1024, @@config[:content][:link],  Digest::SHA256.hexdigest(file.remote.id), File.extname(fname).to_s] 
         return str 
     end    
 
-    def format_restrict(ban=false, hours=0)
-        till = (hours==0) ? 0 : Time.now.getutc.to_i + hours.to_i*3600
-        return (ban) ? TD::Types::ChatMemberStatus::Banned.new(banned_until_date: till) : TD::Types::ChatMemberStatus::Left.new 
+    def format_forward(fwd)
+        str = case fwd.origin
+          when TD::Types::MessageForwardOrigin::User       then self.format_contact(fwd.origin.sender_user_id)
+          when TD::Types::MessageForwardOrigin::HiddenUser then fwd.origin.sender_name
+          when TD::Types::MessageForwardOrigin::Channel    then [self.format_contact(fwd.origin.chat_id), fwd.origin.author_signature].join ' '
+        end
+        return str
+    end
+
+    def format_bantime(hours=0)
+        now = Time.now.getutc.to_i
+        till = now + hours.to_i*3600
+        return (hours.to_i>0) ? till : 0
     end
     
 end
