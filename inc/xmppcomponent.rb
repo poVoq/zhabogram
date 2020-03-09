@@ -52,8 +52,8 @@ class XMPPComponent
         @logger.debug presence.to_s
         @sessions[presence.from.bare.to_s] = TelegramClient.new(self, presence.from.bare.to_s) unless @sessions.key? presence.from.bare.to_s  # create session
         @sessions[presence.from.bare.to_s] = nil if presence.type == :unsubscribed # destroy session
-        @sessions[presence.from.bare.to_s].disconnect() if presence.type == :unavailable or presence.type == :error # go offline
-        @sessions[presence.from.bare.to_s].connect() if presence.type == :subscribe or not presence.type # go online
+        @sessions[presence.from.bare.to_s].disconnect(presence.from.resource) if presence.type == :unavailable or presence.type == :error # go offline
+        @sessions[presence.from.bare.to_s].connect(presence.from.resource) if presence.type == :subscribe or not presence.type # go online
     end
 
     def handle_message(message)

@@ -53,11 +53,12 @@ class TelegramClient
         @jid       = jid
         @session   = session
         @cache     = {chats: {nil => []}, users: {}}
+        @resources = []
     end
     
     ## connect telegram client 
-    def connect()
-        return if self.online? # already connected.
+    def connect(resource=nil)
+        return self.refresh(resource) if self.online? # already connected
         @logger.warn 'Connecting to Telegram network..' 
         @telegram = TD::Client.new(database_directory: 'sessions/' + @jid, files_directory: 'sessions/' + @jid + '/files/')
         @telegram.on(TD::Types::Update::AuthorizationState) do |u| @logger.debug(u);  self.update_authorizationstate(u)  end
@@ -69,21 +70,36 @@ class TelegramClient
         @telegram.on(TD::Types::Update::DeleteMessages)     do |u| @logger.debug(u);  self.update_deletemessages(u)      end  
         @telegram.on(TD::Types::Update::File)               do |u| @logger.debug(u);  self.update_file(u)                end
         @telegram.connect()
+        @resources << resource
     end
     
     ## disconnect telegram client 
-    def disconnect()
-        return unless self.online?  # already disconnected
+    def disconnect(resource=nil)
+        @resources.delete resource 
+        return if @resources.count > 0 or not self.online? 
         @logger.warn 'Disconnecting from Telegram network..'
         @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unavailable) end # we're offline (unsubscribe if logout)
         @telegram.dispose()
         @telegram = nil
     end
+
+    ## refresh roster
+    def refresh(resource=nil)
+        return if @resources.include? resource 
+        @logger.warn 'Refreshing roster for resource %s' % resource
+        @cache[:chats].each_key do |chat| self.process_status_update(chat) if chat; end
+        @resources << resource
+    end
     
     ## online?
     def online? 
-        @telegram and @telegram.alive?
+        @telegram and @telegram.alive? 
     end
+    
+    def authorized?
+        @telegram and @telegram.alive and @state == TD::Types::AuthorizationState::Ready
+    end
+    
     
     #########################################################################
     # telegram updates handlers #############################################
