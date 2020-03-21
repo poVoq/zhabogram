@@ -23,12 +23,12 @@ class XMPPComponent
             @component.add_iq_callback       do |stanza| self.handle_vcard_iq(stanza)     if stanza.type == :get    and stanza.vcard                      end  # vcards handler 
             @logger.warn 'Connected to XMPP server' 
             @db.transaction do  @db[:sessions].each do |jid, session| @sessions[jid] = TelegramClient.new(self, jid, session) end end # probe all known sessions
-            @sessions.each_key do |jid| self.send_presence(jid,nil,:probe) end
+            @sessions.each_key do |jid| self.send_presence(jid, nil, :probe) end
             Thread.new { while @component.is_connected? do sleep 60; @queue.delete_if {|_, presence| @component.send(presence) || true } end }   # status updater thread
             Thread.stop()  # stop main thread loop 
         rescue Exception => error
             @logger.error 'Disconnecting.. %s' % error.to_s
-            @sessions.each_value do |session| session.disconnect() end  # close all sessions
+            @sessions.each_value do |session| session.disconnect(nil, true) end  # close all sessions
             @db.transaction do @sessions.each do |jid, session| @db[:sessions][jid] = session.session end end # save sessions
             @component.on_exception do |exception,| end # disable exception handling 
             @component.close()  # close stream
@@ -52,8 +52,8 @@ class XMPPComponent
         @logger.debug presence.to_s
         @sessions[presence.from.bare.to_s] = TelegramClient.new(self, presence.from.bare.to_s) unless @sessions.key? presence.from.bare.to_s  # create session
         @sessions[presence.from.bare.to_s] = nil if presence.type == :unsubscribed # destroy session
-        @sessions[presence.from.bare.to_s].disconnect() if presence.type == :unavailable or presence.type == :error # go offline
-        @sessions[presence.from.bare.to_s].connect() if not presence.type # go online
+        @sessions[presence.from.bare.to_s].disconnect(presence.from.resource) if presence.type == :unavailable or presence.type == :error # go offline
+        @sessions[presence.from.bare.to_s].connect(presence.from.resource) if presence.type == :subscribe or not presence.type # go online
     end
 
     def handle_message(message)
