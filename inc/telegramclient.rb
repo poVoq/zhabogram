@@ -10,6 +10,7 @@ PERMISSIONS = {
     admin: {can_be_edited: true, can_change_info: true, can_post_messages: true, can_edit_messages: true, can_delete_messages: true, can_invite_users: true, can_restrict_members: true, can_pin_messages: true, can_promote_members: false},
     member: TD::Types::ChatPermissions.new(can_send_messages: true, can_send_media_messages: true, can_send_polls: true, can_send_other_messages: true, can_add_web_page_previews: true, can_change_info: true, can_invite_users: true, can_pin_messages: true),
     readonly: TD::Types::ChatPermissions.new(can_send_messages: false, can_send_media_messages: false, can_send_polls: false, can_send_other_messages: false, can_add_web_page_previews: false, can_change_info: false, can_invite_users: false, can_pin_messages: false),
+    login: TD::Types::PhoneNumberAuthenticationSettings.new(allow_flash_call: false, is_current_phone_number: false, allow_sms_retriever_api: false),
 }
     
 HELP_GATE_CMD = %q{Available commands: 
@@ -56,12 +57,13 @@ HELP_CHAT_CMD= %q{Available commands:
 }
 
 class TelegramClient
+    attr_reader :session
 
     ## configure tdlib (when valid tdlib params specified) or zhabogram
     def self.configure(**config) 
-        @@config = DEFAULTS.merge(config)  
+        @@config = config
         TD.config.update(config[:tdlib])
-        TD::Api.set_log_verbosity_level(@@config[:tdlib_verbosity])
+        TD::Api.set_log_verbosity_level(config[:tdlib_verbosity])
     end
     
     ## initialize telegram client instance (xmpp = XMPP stream, jid = user's jid , login = user's telegram login (for now, it is phone number)
@@ -89,18 +91,19 @@ class TelegramClient
         @telegram.on(TD::Types::Update::MessageContent)     do |u| @logger.debug(u);  self.update_messagecontent(u)      end  
         @telegram.on(TD::Types::Update::DeleteMessages)     do |u| @logger.debug(u);  self.update_deletemessages(u)      end  
         @telegram.on(TD::Types::Update::File)               do |u| @logger.debug(u);  self.update_file(u)                end
-        @telegram.connect().wait()
+        @telegram.connect()
         @resources << resource
     end
     
     ## disconnect telegram client 
     def disconnect(resource=nil, quit=false)
         @resources.delete(resource)
-        return unless (@resources.empty? && @session[:keeponline] != 'true') || quit
+        return if ((@resources.count > 0 || @session[:keeponline] == 'true') && !quit)
+	return if not self.online?
         @logger.warn 'Disconnecting from Telegram network..'
-        @telegram.dispose() if self.online?
-        @telegram = nil
         @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unavailable) end
+        @telegram.dispose()
+	@telegram = nil
     end
 
     ## resend statuses to (to another resource for example)
@@ -124,11 +127,10 @@ class TelegramClient
     
     ##  authorization state change 
     def update_authorizationstate(update)
-        @state = update.authorization_state.class.name
         case update.authorization_state
         when TD::Types::AuthorizationState::WaitPhoneNumber # stage 0: set login 
             @logger.warn 'Logging in..'
-            @telegram.set_authentication_phone_number(@session[:login]) if @session[:login]
+            @telegram.set_authentication_phone_number(@session[:login], PERMISSIONS[:login]) if @session[:login]
             @xmpp.send_message(@jid, nil, 'Please, enter your Telegram login via /login 12345') if not @session[:login]
         when TD::Types::AuthorizationState::WaitCode # stage 1: wait for auth code 
             @logger.warn 'Waiting for authorization code..'
@@ -179,7 +181,7 @@ class TelegramClient
             when TD::Types::MessageContent::Video then [content.video.video, 'video' + content.video.file_name + '.mp4'] 
             when TD::Types::MessageContent::Document then [content.document.document, content.document.file_name]
         end
-        @telegram.download_file(file[0].id, 10, 0, 0, false) if file and not file[0].local.is_downloading_completed # download file(s)
+        @telegram.download_file(file[0].id, 1, 0, 0, false) if file and not file[0].local.is_downloading_completed # download file(s)
         prefix << (update.message.is_outgoing ? '➡ ' : '⬅ ') + update.message.id.to_s  # message direction
         prefix << "%s" % self.format_contact(update.message.sender_user_id) if update.message.chat_id < 0 and update.message.sender_user_id # show sender in group chats 
         prefix << "reply: %s" % self.format_message(update.message.chat_id, update.message.reply_to_message_id, true) if update.message.reply_to_message_id.to_i != 0 # reply to
@@ -207,7 +209,8 @@ class TelegramClient
     
     ##  new chat discovered 
     def update_newchat(update)
-        @telegram.download_file(update.chat.photo.small.id, 32, 0, 0, false).wait if update.chat.photo 
+        puts update.to_json
+        @telegram.download_file(update.chat.photo.small.id, 10, 0, 0, false) if update.chat.photo 
         @cache[:chats][update.chat.id] = update.chat
         @xmpp.send_presence(@jid, update.chat.id, :subscribe, nil, nil, update.chat.title.to_s) unless (update.chat.type.instance_of? TD::Types::ChatType::Supergroup and update.chat.type.is_channel and update.chat.last_read_inbox_message_id == 0)
         self.process_status_update(update.chat.id, update.chat.title, :chat) if update.chat.id < 0
@@ -227,7 +230,7 @@ class TelegramClient
     ##  file downloaded
     def update_file(update)
         return unless update.file.local.is_downloading_completed # not really
-        File.symlink(update.file.local.path, "%s/%s%s" % [@@config[:content][:path], Digest::SHA256.hexdigest(update.file.remote.id), File.extname(update.file.local.path)])
+        File.symlink(update.file.local.path, "%s/%s%s" % [@@config[:content][:path], Digest::SHA256.hexdigest(update.file.remote.unique_id), File.extname(update.file.local.path)])
     end
 
     #########################################################################
@@ -284,8 +287,8 @@ class TelegramClient
         chat, user = self.get_contact(id) unless id == 0  # get chat information
         if id == 0 then  # transport commands 
             case cmd
-            when '/login'       then @telegram.set_authentication_phone_number(args[0]).then{|_| @session[:login] = args[0]} unless @session[:login]  # sign in
-            when '/logout'      then @telegram.log_out().then{|_| @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unsubscribed); @session[:login] = nil end } # sign out
+            when '/login'       then @telegram.set_authentication_phone_number(args[0], PERMISSIONS[:login]).then{@session[:login] = args[0]} unless @session[:login]  # sign in
+            when '/logout'      then @telegram.log_out().then{@cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unsubscribed); @session[:login] = nil end} # sign out
             when '/code'        then @telegram.check_authentication_code(args[0]) # check auth code 
             when '/password'    then @telegram.check_authentication_password(args[0]) # chech auth password
             when '/setusername' then @telegram.set_username(args[0] || '') # set @username
@@ -353,7 +356,7 @@ class TelegramClient
     end
 
     def format_content(file, fname) 
-        str = "%s (%d kbytes) | %s/%s%s" % [fname, file.size/1024, @@config[:content][:link],  Digest::SHA256.hexdigest(file.remote.id), File.extname(fname).to_s] 
+        str = "%s (%d kbytes) | %s/%s%s" % [fname, file.size/1024, @@config[:content][:link],  Digest::SHA256.hexdigest(file.remote.unique_id), File.extname(fname).to_s] 
         return str 
     end    
 
