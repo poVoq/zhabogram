@@ -74,7 +74,7 @@ class TelegramClient
         @jid       = jid
         @session   = session
         @resources = Set.new
-        @cache     = {chats: {nil => []}, users: {}}
+        @cache     = {chats: {nil => []}, users: {}, status: {}}
         self.connect() if @session[:keeponline] == 'true'
     end
     
@@ -99,11 +99,11 @@ class TelegramClient
     def disconnect(resource=nil, quit=false)
         @resources.delete(resource)
         return if ((@resources.count > 0 || @session[:keeponline] == 'true') && !quit)
-	return if not self.online?
+        return if not self.online?
         @logger.warn 'Disconnecting from Telegram network..'
         @cache[:chats].each_key do |chat| @xmpp.send_presence(@jid, chat, :unavailable) end
         @telegram.dispose()
-	@telegram = nil
+        @telegram = nil
     end
 
     ## resend statuses to (to another resource for example)
@@ -219,11 +219,13 @@ class TelegramClient
     ##  new user discovered 
     def update_user(update)
         @cache[:users][update.user.id] = update.user
+        @cache[:status][update.user.id] = update.user.status
         self.process_status_update(update.user.id, update.user.status)
     end
 
     ##  user status changed
     def update_userstatus(update)
+        @cache[:status][update.user_id] = update.status
         self.process_status_update(update.user_id, update.status, nil, false)
     end
 
@@ -258,7 +260,7 @@ class TelegramClient
         @logger.info "Status update for %s" % id
         chat, user = self.get_contact(id)
         photo = Digest::SHA1.hexdigest(IO.binread(chat.photo.small.local.path)) if chat and chat.photo and File.exist? chat.photo.small.local.path
-        status ||= user.status if user and user.status
+        status ||= @cache[:status][id] if @cache[:status][id]
         case status
             when nil                              then show, status = :chat, chat ? chat.title : nil
             when TD::Types::UserStatus::Online    then show, status = nil, "Online"
