@@ -156,37 +156,36 @@ class TelegramClient
 
         content, prefix = update.message.content, []
         text = case content # text 
+            when TD::Types::MessageContent::Text then content.text.text
             when TD::Types::MessageContent::Sticker then content.sticker.emoji
+            when TD::Types::MessageContent::Animation, TD::Types::MessageContent::Photo, TD::Types::MessageContent::Audio, TD::Types::MessageContent::Video, TD::Types::MessageContent::Document then content.caption.text
+            when TD::Types::MessageContent::Location then "coordinates: %{latitude},%{longitude} | https://www.google.com/maps/search/%{latitude},%{longitude}/" %  content.location.to_h
+            when TD::Types::MessageContent::VoiceNote then 'voice note (%i s.).oga' % content.voice_note.duration
+            when TD::Types::MessageContent::VideoNote then 'video note (%i s.).mp4' % content.video_note.duration
             when TD::Types::MessageContent::BasicGroupChatCreate, TD::Types::MessageContent::SupergroupChatCreate then "has created chat"
+            when TD::Types::MessageContent::PinMessage then "pinned message: %s" % self.format_message(update.message.chat_id, content.message_id)
             when TD::Types::MessageContent::ChatJoinByLink then "joined chat via invite link"
             when TD::Types::MessageContent::ChatAddMembers then "invited %s" % self.format_contact(message.content.member_user_ids.first)
             when TD::Types::MessageContent::ChatDeleteMember then "kicked %s" % self.format_contact(update.message.content.user_id)
-            when TD::Types::MessageContent::PinMessage then "pinned message: %s" % self.format_message(update.message.chat_id, content.message_id)
             when TD::Types::MessageContent::ChatChangeTitle then "chat title set to: %s" % update.message.content.title
-            when TD::Types::MessageContent::Location then "coordinates: %{latitude},%{longitude} | https://www.google.com/maps/search/%{latitude},%{longitude}/" %  content.location.to_h
-            when TD::Types::MessageContent::Photo, TD::Types::MessageContent::Audio, TD::Types::MessageContent::Video, TD::Types::MessageContent::Document then content.caption.text
-            when TD::Types::MessageContent::Text then content.text.text
-            when TD::Types::MessageContent::VoiceNote then content.caption.text
-            when TD::Types::MessageContent::VideoNote then ''
-            when TD::Types::MessageContent::Animation then ''
             else "unknown message (%s)" % update.message.content.class
         end
         file = case content # file(s)
-            when TD::Types::MessageContent::Sticker then [content.sticker.sticker, 'sticker.webp']
-            when TD::Types::MessageContent::VoiceNote then [content.voice_note.voice, 'voice note (%i s.).oga' % content.voice_note.duration]
-            when TD::Types::MessageContent::VideoNote then [content.video_note.video, 'video note (%i s.).mp4' % content.video_note.duration]
-            when TD::Types::MessageContent::Animation then [content.animation.animation, 'animation.mp4' ]
-            when TD::Types::MessageContent::Photo then [content.photo.sizes[-1].photo, 'photo.jpg']
-            when TD::Types::MessageContent::Audio then [content.audio.audio, content.audio.file_name] 
-            when TD::Types::MessageContent::Video then [content.video.video, 'video' + content.video.file_name + '.mp4'] 
-            when TD::Types::MessageContent::Document then [content.document.document, content.document.file_name]
+            when TD::Types::MessageContent::Sticker then content.sticker.sticker
+            when TD::Types::MessageContent::VoiceNote then content.voice_note.voice 
+            when TD::Types::MessageContent::VideoNote then content.video_note.video
+            when TD::Types::MessageContent::Animation then content.animation.animation
+            when TD::Types::MessageContent::Photo then content.photo.sizes[-1].photo 
+            when TD::Types::MessageContent::Audio then content.audio.audio 
+            when TD::Types::MessageContent::Video then content.video.video 
+            when TD::Types::MessageContent::Document then content.document.document 
         end
-        @telegram.download_file(file[0].id, 1, 0, 0, false) if file and not file[0].local.is_downloading_completed # download file(s)
+        file = @telegram.download_file(file.id, 1, 0, 0, true).value if file # download file (if one)
         prefix << (update.message.is_outgoing ? '➡ ' : '⬅ ') + update.message.id.to_s  # message direction
         prefix << "%s" % self.format_contact(update.message.sender_user_id) if update.message.chat_id < 0 and update.message.sender_user_id # show sender in group chats 
         prefix << "reply: %s" % self.format_message(update.message.chat_id, update.message.reply_to_message_id, true) if update.message.reply_to_message_id.to_i != 0 # reply to
         prefix << "fwd: %s" % self.format_forward(update.message.forward_info) if update.message.forward_info # forward
-        prefix << "file: %s" % self.format_content(file[0], file[1]) if file  # file
+        prefix << "file: %s" % self.format_file(file) if file  # file
         prefix = prefix.join(' | ')
         prefix += (update.message.chat_id < 0 and text and text != "") ? "\n" : '' # \n if it is groupchat and message is not empty
         prefix += (update.message.chat_id > 0 and text and text != "") ? " | " : ''
@@ -232,7 +231,6 @@ class TelegramClient
     ##  file downloaded
     def update_file(update)
         return unless update.file.local.is_downloading_completed # not really
-        File.symlink(update.file.local.path, "%s/%s%s" % [@@config[:content][:path], Digest::SHA256.hexdigest(update.file.remote.unique_id), File.extname(update.file.local.path)])
     end
 
     #########################################################################
@@ -261,6 +259,7 @@ class TelegramClient
         chat, user = self.get_contact(id)
         photo = Digest::SHA1.hexdigest(IO.binread(chat.photo.small.local.path)) if chat and chat.photo and File.exist? chat.photo.small.local.path
         status ||= @cache[:status][id] if @cache[:status][id]
+        status ||= user.status if user and user.status
         case status
             when nil                              then show, status = :chat, chat ? chat.title : nil
             when TD::Types::UserStatus::Online    then show, status = nil, "Online"
@@ -348,6 +347,15 @@ class TelegramClient
         return str
     end
 
+    def format_file(file)
+        return unless File.exist? file.local.path
+        src = file.local.path # source path
+        dest = "%s/%s" % [@@config[:content][:path], file.remote.unique_id + File.extname(file.local.path)]  # destination path 
+        link = "%s/%s" % [@@config[:content][:link], File.basename(dest)] # download link
+        File.rename(src, dest)
+        return "%s (%d kbytes) | %s" % [File.basename(src), file.size/1024, link] 
+    end
+
     def format_message(id, message, preview=false)
         message = (message.instance_of? TD::Types::Message) ? message : @telegram.get_message(id, message).value
         return unless message
@@ -356,11 +364,6 @@ class TelegramClient
         str += (not preview or message.content.text.text.lines.count <= 1) ? message.content.text.text : message.content.text.text.lines.first
         return str
     end
-
-    def format_content(file, fname) 
-        str = "%s (%d kbytes) | %s/%s%s" % [fname, file.size/1024, @@config[:content][:link],  Digest::SHA256.hexdigest(file.remote.unique_id), File.extname(fname).to_s] 
-        return str 
-    end    
 
     def format_forward(fwd)
         str = case fwd.origin
