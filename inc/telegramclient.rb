@@ -160,8 +160,8 @@ class TelegramClient
             when TD::Types::MessageContent::Sticker then content.sticker.emoji
             when TD::Types::MessageContent::Animation, TD::Types::MessageContent::Photo, TD::Types::MessageContent::Audio, TD::Types::MessageContent::Video, TD::Types::MessageContent::Document then content.caption.text
             when TD::Types::MessageContent::Location then "coordinates: %{latitude},%{longitude} | https://www.google.com/maps/search/%{latitude},%{longitude}/" %  content.location.to_h
-            when TD::Types::MessageContent::VoiceNote then 'voice note (%i s.).oga' % content.voice_note.duration
-            when TD::Types::MessageContent::VideoNote then 'video note (%i s.).mp4' % content.video_note.duration
+            when TD::Types::MessageContent::VoiceNote then 'voice note (%i s.)' % content.voice_note.duration
+            when TD::Types::MessageContent::VideoNote then 'video note (%i s.)' % content.video_note.duration
             when TD::Types::MessageContent::BasicGroupChatCreate, TD::Types::MessageContent::SupergroupChatCreate then "has created chat"
             when TD::Types::MessageContent::PinMessage then "pinned message: %s" % self.format_message(update.message.chat_id, content.message_id)
             when TD::Types::MessageContent::ChatJoinByLink then "joined chat via invite link"
@@ -359,9 +359,10 @@ class TelegramClient
     def format_message(id, message, preview=false)
         message = (message.instance_of? TD::Types::Message) ? message : @telegram.get_message(id, message).value
         return unless message
-        str = "%s | %s | " % [message.id, self.format_contact(message.sender_user_id)]
-        str += DateTime.strptime((message.date+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S | ") unless preview
-        str += (not preview or message.content.text.text.lines.count <= 1) ? message.content.text.text : message.content.text.text.lines.first
+        str = "%s | %s | " % [message.id, self.format_contact(message.sender_user_id)] # add messageid and sender
+        str += DateTime.strptime((message.date+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S | ") unless preview # add date
+        str += (not preview or message.content.text.text.lines.count <= 1) ? message.content.text.text : message.content.text.text.lines.first if message.content.respond_to? 'text'  # text message
+        str += message.content.caption.text if message.content.respond_to? 'text'  # content caption
         return str
     end
 
