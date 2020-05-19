@@ -362,7 +362,7 @@ class TelegramClient
         str = "%s | %s | " % [message.id, self.format_contact(message.sender_user_id)] # add messageid and sender
         str += DateTime.strptime((message.date+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("%d %b %Y %H:%M:%S | ") unless preview # add date
         str += (not preview or message.content.text.text.lines.count <= 1) ? message.content.text.text : message.content.text.text.lines.first if message.content.respond_to? 'text'  # text message
-        str += message.content.caption.text if message.content.respond_to? 'text'  # content caption
+        str += message.content.caption.text if message.content.respond_to? 'caption'  # content caption
         return str
     end
 
