@@ -264,13 +264,13 @@ class TelegramClient
             when nil                              then show, status = :chat, chat ? chat.title : nil
             when TD::Types::UserStatus::Online    then show, status = nil, "Online"
             when TD::Types::UserStatus::Recently  then show, status = :dnd, "Last seen recently"
-            when TD::Types::UserStatus::LastWeek  then show, status = :unavailable, "Last seen last week"
-            when TD::Types::UserStatus::LastMonth then show, status = :unavailable, "Last seen last month"
-            when TD::Types::UserStatus::Empty     then show, status = :unavailable, "Last seen a long time ago"
+            when TD::Types::UserStatus::LastWeek  then show, status = :xa, "Last seen last week"
+            when TD::Types::UserStatus::LastMonth then show, status = :xa, "Last seen last month"
+            when TD::Types::UserStatus::Empty     then type, status = :unavailable, "Last seen a long time ago"
             when TD::Types::UserStatus::Offline   then show, status = (Time.now.getutc.to_i-status.was_online.to_i<3600) ? :away : :xa, 
                                                                        DateTime.strptime((status.was_online+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
         end
-        return @xmpp.send_presence(@jid, id, nil, show, status, nil, photo, immed) 
+        return @xmpp.send_presence(@jid, id, type, show, status, nil, photo, immed) 
     end
 
     ##  send outgoing message to telegram user  
@@ -308,7 +308,7 @@ class TelegramClient
             when '/join'       then @telegram.join_chat_by_invite_link(args[0])  # join https://t.me/publichat
             when '/supergroup' then @telegram.create_new_supergroup_chat(args[0], false, args[1..-1].join(' '), nil) # create new supergroup 
             when '/channel'    then @telegram.create_new_supergroup_chat(args[0], true, args[1..-1].join(' '), nil)  # create new channel 
-            when '/secret'     then @telegram.create_new_secret_chat(chat.id, false)  # create secret chat with current user
+            when '/secret'     then @telegram.create_new_secret_chat(chat.id)  # create secret chat with current user
             when '/group'      then @telegram.create_new_basic_group_chat(chat.id, args[0]) # create group chat with current user 
             when '/block'      then @telegram.block_user(chat.id) # blacklists current user
             when '/unblock'    then @telegram.unblock_user(chat.id) # unblacklists current user 
@@ -323,7 +323,7 @@ class TelegramClient
             when '/promote'    then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Administrator.new(custom_title: args[0].to_s, **PERMISSIONS[:admin])) # promote @username to admin 
             when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # leave current chat  
             when '/leave!'     then @telegram.delete_supergroup(chat.type.supergroup_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}.rescue{|e| puts e.to_s}  # leave current chat (for owners) 
-            when '/close'      then @telegram.close_secret_chat(chat.type.secret_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
+            when '/close'      then @telegram.close_secret_chat(chat.type.secret_chat_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
             when '/delete'     then @telegram.delete_chat_history(chat.id, true, true).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)} # delete current chat 
             when '/search'     then @telegram.get_messages(chat.id, self.get_lastmessages(chat.id, args[0], 0, args[1]||100).map(&:id)).value.messages.reverse.each{|msg| @xmpp.send_message(@jid, chat.id, self.format_message(chat.id,msg,false))} # message search
             when '/help'       then @xmpp.send_message(@jid, id, HELP_CHAT_CMD)
