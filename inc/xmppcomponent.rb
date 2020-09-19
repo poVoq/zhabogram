@@ -1,3 +1,5 @@
+include Jabber::Discovery
+
 class XMPPComponent
 
     ##  initialize zhabogram 
@@ -21,6 +23,8 @@ class XMPPComponent
             @component.add_presence_callback do |stanza| self.handle_presence(stanza)     if stanza.to == @component.jid  end  # presence handler 
             @component.add_message_callback  do |stanza| self.handle_message(stanza)      if stanza.type != :error  and stanza.first_element_text('body') end  # messages handler  
             @component.add_iq_callback       do |stanza| self.handle_vcard_iq(stanza)     if stanza.type == :get    and stanza.vcard                      end  # vcards handler 
+            @disco = Jabber::Discovery::Responder.new(@component)
+            @disco.identities = [ Identity.new('gateway', 'Telegram Gateway', 'telegram') ]
             @logger.warn 'Connected to XMPP server' 
             @db.transaction do  @db[:sessions].each do |jid, session| @sessions[jid] = TelegramClient.new(self, jid, session) end end # probe all known sessions
             @sessions.each_key do |jid| self.send_presence(jid, nil, :probe) end
