@@ -70,6 +70,7 @@ class TelegramClient
     def initialize(xmpp, jid, **session)
         return unless @@config
         @logger    = Logger.new(STDOUT, level: @@config[:loglevel], progname: 'TelegramClient: %s | %s' % [jid, session[:login]] )
+        @resource  = @@config[:tdlib][:client][:device_model] || 'zhabogram'
         @xmpp      = xmpp
         @jid       = jid
         @session   = session
@@ -270,7 +271,7 @@ class TelegramClient
             when TD::Types::UserStatus::Offline   then show, status = (Time.now.getutc.to_i-status.was_online.to_i<3600) ? :away : :xa, 
                                                                        DateTime.strptime((status.was_online+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
         end
-        return @xmpp.send_presence(@jid, id, type, show, status, nil, photo, immed) 
+        return @xmpp.send_presence(@jid, id, type, show, status, nil, photo, @resource, immed) 
     end
 
     ##  send outgoing message to telegram user  

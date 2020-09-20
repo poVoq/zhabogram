@@ -94,10 +94,10 @@ class XMPPComponent
         @component.send(message)
     end
 
-    def send_presence(to, from=nil, type=nil, show=nil, status=nil, nickname=nil, photo=nil, immed=true)
+    def send_presence(to, from=nil, type=nil, show=nil, status=nil, nickname=nil, photo=nil, resource=nil, immed=true)
         @logger.info "Got presence :%s from %s to %s" % [type, from||@component.jid, to]
         presence = Jabber::Presence.new()
-        presence.from = from.nil? ? @component.jid : "%s@%s" % [from.to_s, @component.jid.to_s] # presence <from> 
+        presence.from = from.nil? ? @component.jid : "%s@%s%s" % [from.to_s, @component.jid.to_s, (resource ? "/"+resource : "")] # presence <from> 
         presence.to = to # presence <to>
         presence.type = type unless type.nil? # pres. type
         presence.show = show unless show.nil? # presence <show>
