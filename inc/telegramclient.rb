@@ -27,6 +27,7 @@ HELP_GATE_CMD = %q{Available commands:
     Configuration options
     timezone <timezone> — adjust timezone for Telegram user statuses (example: +02:00)
     keeponline <bool> — always keep telegram session online and rely on jabber offline messages (example: true)
+    rawmessages <bool> — do not add additional info (message id, origin etc.) to incoming messages (example: true)
 }
 
 HELP_CHAT_CMD= %q{Available commands:
@@ -190,7 +191,7 @@ class TelegramClient
         prefix = prefix.join(' | ')
         prefix += (update.message.chat_id < 0 and text and text != "") ? "\n" : '' # \n if it is groupchat and message is not empty
         prefix += (update.message.chat_id > 0 and text and text != "") ? " | " : ''
-        text = prefix + text unless text.start_with? '?OTR'  # OTR support (I do not know why would you need it, seriously)
+        text = prefix + text unless (text.start_with? '?OTR' or @session[:rawmessages] == 'true')  # OTR support (I do not know why would you need it, seriously)
         @telegram.view_messages(update.message.chat_id, [update.message.id], true) # mark message as read  
         @xmpp.send_message(@jid, update.message.chat_id, text)  # forward message to XMPP
     end
