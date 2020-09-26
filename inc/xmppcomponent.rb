@@ -49,6 +49,7 @@ class XMPPComponent
         answer = presence.answer(false)
         answer.type = :subscribed
         @component.send(answer)
+        @sessions[presence.from.bare.to_s].process_status_update(presence.to.to_s.split('@').first.to_i)
     end
 
     def handle_presence(presence)
