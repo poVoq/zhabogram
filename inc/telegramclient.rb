@@ -51,6 +51,7 @@ HELP_CHAT_CMD= %q{Available commands:
     /promote id or @username — promote user to admin in current chat
     /leave — leave current chat
     /leave! — leave current chat (for owners)
+    /ttl — set secret chat messages TTL before self-destroying (in seconds)
     /close — close current secret chat
     /delete — delete current chat from chat list
     /members [query] — search members [by optional query] in current chat (requires admin rights)
@@ -325,6 +326,7 @@ class TelegramClient
             when '/promote'    then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Administrator.new(custom_title: args[0].to_s, **PERMISSIONS[:admin])) # promote @username to admin 
             when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # leave current chat  
             when '/leave!'     then @telegram.delete_supergroup(chat.type.supergroup_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}.rescue{|e| puts e.to_s}  # leave current chat (for owners) 
+            when '/ttl'        then @telegram.send_chat_set_ttl_message(chat.type.secret_chat_id, args[0].to_i)  # close secret chat 
             when '/close'      then @telegram.close_secret_chat(chat.type.secret_chat_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
             when '/delete'     then @telegram.delete_chat_history(chat.id, true, true).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)} # delete current chat 
             when '/search'     then @telegram.get_messages(chat.id, self.get_lastmessages(chat.id, args[0], 0, args[1]||100).map(&:id)).value.messages.reverse.each{|msg| @xmpp.send_message(@jid, chat.id, self.format_message(chat.id,msg,false))} # message search
