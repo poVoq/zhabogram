@@ -1,3 +1,5 @@
+include Jabber::Discovery
+
 class XMPPComponent
 
     ##  initialize zhabogram 
@@ -21,6 +23,8 @@ class XMPPComponent
             @component.add_presence_callback do |stanza| self.handle_presence(stanza)     if stanza.to == @component.jid  end  # presence handler 
             @component.add_message_callback  do |stanza| self.handle_message(stanza)      if stanza.type != :error  and stanza.first_element_text('body') end  # messages handler  
             @component.add_iq_callback       do |stanza| self.handle_vcard_iq(stanza)     if stanza.type == :get    and stanza.vcard                      end  # vcards handler 
+            @disco = Jabber::Discovery::Responder.new(@component)
+            @disco.identities = [ Identity.new('gateway', 'Telegram Gateway', 'telegram') ]
             @logger.warn 'Connected to XMPP server' 
             @db.transaction do  @db[:sessions].each do |jid, session| @sessions[jid] = TelegramClient.new(self, jid, session) end end # probe all known sessions
             @sessions.each_key do |jid| self.send_presence(jid, nil, :probe) end
@@ -45,6 +49,7 @@ class XMPPComponent
         answer = presence.answer(false)
         answer.type = :subscribed
         @component.send(answer)
+        @sessions[presence.from.bare.to_s].process_status_update(presence.to.to_s.split('@').first.to_i)
     end
 
     def handle_presence(presence)
@@ -90,10 +95,10 @@ class XMPPComponent
         @component.send(message)
     end
 
-    def send_presence(to, from=nil, type=nil, show=nil, status=nil, nickname=nil, photo=nil, immed=true)
+    def send_presence(to, from=nil, type=nil, show=nil, status=nil, nickname=nil, photo=nil, resource=nil, immed=true)
         @logger.info "Got presence :%s from %s to %s" % [type, from||@component.jid, to]
         presence = Jabber::Presence.new()
-        presence.from = from.nil? ? @component.jid : "%s@%s" % [from.to_s, @component.jid.to_s] # presence <from> 
+        presence.from = from.nil? ? @component.jid : "%s@%s%s" % [from.to_s, @component.jid.to_s, (resource ? "/"+resource : "")] # presence <from> 
         presence.to = to # presence <to>
         presence.type = type unless type.nil? # pres. type
         presence.show = show unless show.nil? # presence <show>

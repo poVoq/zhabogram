@@ -27,6 +27,7 @@ HELP_GATE_CMD = %q{Available commands:
     Configuration options
     timezone <timezone> — adjust timezone for Telegram user statuses (example: +02:00)
     keeponline <bool> — always keep telegram session online and rely on jabber offline messages (example: true)
+    rawmessages <bool> — do not add additional info (message id, origin etc.) to incoming messages (example: true)
 }
 
 HELP_CHAT_CMD= %q{Available commands:
@@ -50,6 +51,7 @@ HELP_CHAT_CMD= %q{Available commands:
     /promote id or @username — promote user to admin in current chat
     /leave — leave current chat
     /leave! — leave current chat (for owners)
+    /ttl — set secret chat messages TTL before self-destroying (in seconds)
     /close — close current secret chat
     /delete — delete current chat from chat list
     /members [query] — search members [by optional query] in current chat (requires admin rights)
@@ -70,6 +72,7 @@ class TelegramClient
     def initialize(xmpp, jid, **session)
         return unless @@config
         @logger    = Logger.new(STDOUT, level: @@config[:loglevel], progname: 'TelegramClient: %s | %s' % [jid, session[:login]] )
+        @resource  = @@config[:tdlib][:client][:device_model] || 'zhabogram'
         @xmpp      = xmpp
         @jid       = jid
         @session   = session
@@ -189,7 +192,7 @@ class TelegramClient
         prefix = prefix.join(' | ')
         prefix += (update.message.chat_id < 0 and text and text != "") ? "\n" : '' # \n if it is groupchat and message is not empty
         prefix += (update.message.chat_id > 0 and text and text != "") ? " | " : ''
-        text = prefix + text unless text.start_with? '?OTR'  # OTR support (I do not know why would you need it, seriously)
+        text = prefix + text unless (text.start_with? '?OTR' or @session[:rawmessages] == 'true')  # OTR support (I do not know why would you need it, seriously)
         @telegram.view_messages(update.message.chat_id, [update.message.id], true) # mark message as read  
         @xmpp.send_message(@jid, update.message.chat_id, text)  # forward message to XMPP
     end
@@ -264,13 +267,13 @@ class TelegramClient
             when nil                              then show, status = :chat, chat ? chat.title : nil
             when TD::Types::UserStatus::Online    then show, status = nil, "Online"
             when TD::Types::UserStatus::Recently  then show, status = :dnd, "Last seen recently"
-            when TD::Types::UserStatus::LastWeek  then show, status = :unavailable, "Last seen last week"
-            when TD::Types::UserStatus::LastMonth then show, status = :unavailable, "Last seen last month"
-            when TD::Types::UserStatus::Empty     then show, status = :unavailable, "Last seen a long time ago"
+            when TD::Types::UserStatus::LastWeek  then show, status = :xa, "Last seen last week"
+            when TD::Types::UserStatus::LastMonth then show, status = :xa, "Last seen last month"
+            when TD::Types::UserStatus::Empty     then type, status = :unavailable, "Last seen a long time ago"
             when TD::Types::UserStatus::Offline   then show, status = (Time.now.getutc.to_i-status.was_online.to_i<3600) ? :away : :xa, 
                                                                        DateTime.strptime((status.was_online+Time.now.getlocal(@session[:timezone]).utc_offset).to_s,'%s').strftime("Last seen at %H:%M %d/%m/%Y")
         end
-        return @xmpp.send_presence(@jid, id, nil, show, status, nil, photo, immed) 
+        return @xmpp.send_presence(@jid, id, type, show, status, nil, photo, @resource, immed) 
     end
 
     ##  send outgoing message to telegram user  
@@ -308,7 +311,7 @@ class TelegramClient
             when '/join'       then @telegram.join_chat_by_invite_link(args[0])  # join https://t.me/publichat
             when '/supergroup' then @telegram.create_new_supergroup_chat(args[0], false, args[1..-1].join(' '), nil) # create new supergroup 
             when '/channel'    then @telegram.create_new_supergroup_chat(args[0], true, args[1..-1].join(' '), nil)  # create new channel 
-            when '/secret'     then @telegram.create_new_secret_chat(chat.id, false)  # create secret chat with current user
+            when '/secret'     then @telegram.create_new_secret_chat(chat.id)  # create secret chat with current user
             when '/group'      then @telegram.create_new_basic_group_chat(chat.id, args[0]) # create group chat with current user 
             when '/block'      then @telegram.block_user(chat.id) # blacklists current user
             when '/unblock'    then @telegram.unblock_user(chat.id) # unblacklists current user 
@@ -323,7 +326,8 @@ class TelegramClient
             when '/promote'    then @telegram.set_chat_member_status(chat.id, self.get_contact(args[0]).first.id, TD::Types::ChatMemberStatus::Administrator.new(custom_title: args[0].to_s, **PERMISSIONS[:admin])) # promote @username to admin 
             when '/leave'      then @telegram.leave_chat(chat.id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # leave current chat  
             when '/leave!'     then @telegram.delete_supergroup(chat.type.supergroup_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}.rescue{|e| puts e.to_s}  # leave current chat (for owners) 
-            when '/close'      then @telegram.close_secret_chat(chat.type.secret_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
+            when '/ttl'        then @telegram.send_chat_set_ttl_message(chat.type.secret_chat_id, args[0].to_i)  # close secret chat 
+            when '/close'      then @telegram.close_secret_chat(chat.type.secret_chat_id).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)}  # close secret chat 
             when '/delete'     then @telegram.delete_chat_history(chat.id, true, true).then{@xmpp.send_presence(@jid, chat.id, :unsubscribed)} # delete current chat 
             when '/search'     then @telegram.get_messages(chat.id, self.get_lastmessages(chat.id, args[0], 0, args[1]||100).map(&:id)).value.messages.reverse.each{|msg| @xmpp.send_message(@jid, chat.id, self.format_message(chat.id,msg,false))} # message search
             when '/help'       then @xmpp.send_message(@jid, id, HELP_CHAT_CMD)
