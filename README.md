@@ -1,4 +1,4 @@
-## Mirror (2020-06-21)
+## Mirror (latest pull 2020-11-01)
 From: https://dev.narayana.im/narayana/zhabogram
 
 ### Dependencies ###
