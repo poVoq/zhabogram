@@ -1,5 +1,6 @@
-## Mirror (latest pull 2020-11-01)
+## Unofficial Mirror (latest pull 2020-11-01)
 From: https://dev.narayana.im/narayana/zhabogram
+(All PRs and issues need to be added there)
 
 ### Dependencies ###
 
