@@ -28,6 +28,7 @@ HELP_GATE_CMD = %q{Available commands:
     timezone <timezone> — adjust timezone for Telegram user statuses (example: +02:00)
     keeponline <bool> — always keep telegram session online and rely on jabber offline messages (example: true)
     rawmessages <bool> — do not add additional info (message id, origin etc.) to incoming messages (example: true)
+    notifydel <bool> — send info (message id) about deleted messages (example: true)
 }
 
 HELP_CHAT_CMD= %q{Available commands:
@@ -206,7 +207,7 @@ class TelegramClient
     ##  message(s) deleted 
     def update_deletemessages(update)
         text = "✗ %s" % update.message_ids.join(',')
-        @xmpp.send_message(@jid, update.chat_id, text) if update.is_permanent
+        @xmpp.send_message(@jid, update.chat_id, text) if update.is_permanent unless @session[:notifydel] == 'false'
     end
     
     ##  new chat discovered 
