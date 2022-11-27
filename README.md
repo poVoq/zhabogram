@@ -2,6 +2,9 @@
 From: https://dev.narayana.im/narayana/zhabogram
 (All PRs and issues need to be added there)
 
+## Zhabogram is deprecated now.
+Repository is archived.
+
 ### Dependencies ###
 
 * Ruby >= 2.4
