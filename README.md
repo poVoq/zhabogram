@@ -1,6 +1,9 @@
 ## Mirror (latest pull 2020-11-01)
 From: https://dev.narayana.im/narayana/zhabogram
 
+## Zhabogram is deprecated now.
+Repository is archived.
+
 ### Dependencies ###
 
 * Ruby >= 2.4
